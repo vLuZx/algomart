@@ -32,7 +32,7 @@ jobs:
 
       - name: Build server
         working-directory: server
-        run: pnpm run build --if-present
+        run: pnpm run build
 
       - name: Test server
         working-directory: server
