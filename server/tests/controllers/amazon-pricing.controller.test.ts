@@ -1,6 +1,6 @@
 import { isValidAsin } from '../../src/utils/barcode.utils.js';
 import { normalizePriceResponse } from '../../src/utils/response.utils.js';
-import { mockPricingData } from '../mocks/amazonPricing.mock.js';
+import { mockPricingData } from '../mocks/amazon-pricing.mock.js';
 
 describe('Amazon Pricing Controller Logic', () => {
   describe('ASIN Validation for Pricing', () => {
