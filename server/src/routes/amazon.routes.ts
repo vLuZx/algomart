@@ -1,8 +1,8 @@
 import { Router, type IRouter } from 'express';
-import * as catalogController from '../controllers/amazonCatalog.controller.js';
-import * as pricingController from '../controllers/amazonPricing.controller.js';
-import * as offersController from '../controllers/amazonOffers.controller.js';
-import * as analysisController from '../controllers/amazonAnalysis.controller.js';
+import * as catalogController from '../controllers/amazon-catalog.controller.js';
+import * as pricingController from '../controllers/amazon-pricing.controller.js';
+import * as offersController from '../controllers/amazon-offers.controller.js';
+import * as analysisController from '../controllers/amazon-analysis.controller.js';
 
 const router: IRouter = Router();
 

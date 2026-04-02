@@ -1,8 +1,8 @@
 import 'dotenv/config';
-import express, { type Express } from "express";
+import express, { type Express } from 'express';
 import cors from 'cors';
-import amazonRoutes from "./routes/amazon.routes.js";
-import { errorHandler, notFoundHandler } from "./middleware/errorHandler.middleware.js";
+import amazonRoutes from './routes/amazon.routes.js';
+import { errorHandler, notFoundHandler } from './middleware/error-handler.middleware.js';
 
 const app: Express = express();
 

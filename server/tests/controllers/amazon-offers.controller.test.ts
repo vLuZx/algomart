@@ -1,6 +1,6 @@
 import { isValidAsin } from '../../src/utils/barcode.utils.js';
 import { normalizeOfferSummary } from '../../src/utils/response.utils.js';
-import { mockOffersData } from '../mocks/amazonOffers.mock.js';
+import { mockOffersData } from '../mocks/amazon-offers.mock.js';
 
 describe('Amazon Offers Controller Logic', () => {
   describe('ASIN Validation for Offers', () => {

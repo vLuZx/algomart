@@ -4,9 +4,9 @@ import {
   normalizeOfferSummary,
   normalizeSalesRank,
 } from '../../src/utils/response.utils.js';
-import { mockCatalogItems } from '../mocks/amazonCatalog.mock.js';
-import { mockPricingData } from '../mocks/amazonPricing.mock.js';
-import { mockOffersData } from '../mocks/amazonOffers.mock.js';
+import { mockCatalogItems } from '../mocks/amazon-catalog.mock.js';
+import { mockPricingData } from '../mocks/amazon-pricing.mock.js';
+import { mockOffersData } from '../mocks/amazon-offers.mock.js';
 
 describe('Response Utils', () => {
   describe('normalizeCatalogItem', () => {
