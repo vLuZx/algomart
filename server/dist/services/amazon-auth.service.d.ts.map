@@ -1,0 +1,1 @@
+{"version":3,"file":"amazon-auth.service.d.ts","sourceRoot":"","sources":["../../src/services/amazon-auth.service.ts"],"names":[],"mappings":"AAGA;;;GAGG;AACH,cAAM,iBAAiB;IACrB,OAAO,CAAC,UAAU,CAA4B;IAC9C,OAAO,CAAC,QAAQ,CAAC,YAAY,CAA0C;IAEvE;;OAEG;IACG,cAAc,IAAI,OAAO,CAAC,MAAM,CAAC;IAUvC;;OAEG;YACW,kBAAkB;IAwChC;;OAEG;IACH,eAAe,IAAI,IAAI;CAGxB;;AAED,wBAAuC"}
