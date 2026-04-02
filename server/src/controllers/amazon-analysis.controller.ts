@@ -1,5 +1,5 @@
 import type { Request, Response, NextFunction } from 'express';
-import amazonAnalysisService from '../services/amazonAnalysis.service.js';
+import amazonAnalysisService from '../services/amazon-analysis.service.js';
 import { isValidBarcode } from '../utils/barcode.utils.js';
 
 /**
