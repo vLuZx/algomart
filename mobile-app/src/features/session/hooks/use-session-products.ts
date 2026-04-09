@@ -24,14 +24,14 @@ export function useSessionProducts(options: UseSessionProductsOptions) {
   const [currentPage, setCurrentPage] = useState(1);
   
   const { session } = useSession(sessionId);
-  const scannedBarcodes = session?.scannedBarcodes || [];
+  const scannedBarcodes = session?.scannedProducts.map(p => p.barcode) || [];
 
   // Fetch all products in parallel
   const productQueries = useQueries({
     queries: scannedBarcodes.map((barcode: string) => ({
       queryKey: ['product-analysis', barcode],
       queryFn: () => productApiService.getAnalysis(barcode),
-      staleTime: 5 * 60 * 1000,
+      staleTime: 60 * 1000,
     })),
   });
 

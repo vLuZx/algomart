@@ -19,35 +19,37 @@ export function isValidBarcode(code: string): boolean {
 }
 
 /**
- * Infer barcode type from length
+ * Normalize barcode to standard format
+ * Converts EAN-13 barcodes with leading 0 to UPC-A (12 digits)
  */
-export function inferBarcodeType(code: string): 'UPC' | 'EAN' | 'UNKNOWN' {
+export function normalizeBarcode(code: string): string {
   const cleanCode = code.trim();
   
-  if (!isValidBarcode(cleanCode)) {
+  // If it's a 13-digit EAN that starts with 0, convert to UPC-A (remove leading 0)
+  if (cleanCode.length === 13 && cleanCode.startsWith('0')) {
+    return cleanCode.substring(1);
+  }
+  
+  return cleanCode;
+}
+
+/**
+ * Infer barcode type from normalized barcode
+ */
+export function inferBarcodeType(code: string): 'UPC' | 'EAN' | 'UNKNOWN' {
+  const normalizedCode = normalizeBarcode(code);
+  
+  if (!isValidBarcode(normalizedCode)) {
     return 'UNKNOWN';
   }
   
-  if (cleanCode.length === 12) {
+  if (normalizedCode.length === 12) {
     return 'UPC';
   }
   
-  if (cleanCode.length === 13) {
+  if (normalizedCode.length === 13) {
     return 'EAN';
   }
   
   return 'UNKNOWN';
-}
-
-/**
- * Normalize barcode (remove whitespace, validate)
- */
-export function normalizeBarcode(code: string): string | null {
-  const cleanCode = code.trim();
-  
-  if (!isValidBarcode(cleanCode)) {
-    return null;
-  }
-  
-  return cleanCode;
 }

@@ -26,7 +26,6 @@ export function ScanModeSelector({ onSelectSingle, onSelectRapid }: ScanModeSele
           ]}
           onPress={onSelectSingle}
         >
-          <Text style={styles.buttonIcon}>📱</Text>
           <Text style={styles.buttonTitle}>Single Scan</Text>
           <Text style={styles.buttonDescription}>
             Scan one product and view detailed analysis
@@ -41,7 +40,6 @@ export function ScanModeSelector({ onSelectSingle, onSelectRapid }: ScanModeSele
           ]}
           onPress={onSelectRapid}
         >
-          <Text style={styles.buttonIcon}>⚡</Text>
           <Text style={styles.buttonTitle}>Rapid Scan</Text>
           <Text style={styles.buttonDescription}>
             Scan multiple products quickly

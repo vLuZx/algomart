@@ -3,17 +3,16 @@
  * Hub for viewing session products and choosing scan mode
  */
 
-import React, { useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, FlatList, Pressable, Alert } from 'react-native';
+import React, { useState, useRef } from 'react';
+import { View, Text, ScrollView, StyleSheet, Pressable, Alert, TextInput } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
 import { ScreenContainer } from '../../components/layout/ScreenContainer';
 import { PageHeader } from '../../components/layout/PageHeader';
 import { ScanModeSelector } from '../../components/session/ScanModeSelector';
-import { Button } from '../../components/ui/Button';
-import { LoadingSpinner } from '../../components/ui/LoadingSpinner';
+import { ScannedProductItem } from '../../components/session/ScannedProductItem';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { ErrorState } from '../../components/ui/ErrorState';
-import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { useSession } from '../../features/session/hooks/use-session';
 import { tokens } from '../../constants/tokens';
 
@@ -26,9 +25,16 @@ export default function SessionDetailScreen() {
     deleteSession,
     setAsActive,
     updateMode,
+    updateName,
   } = useSession(id);
 
   const [productToDelete, setProductToDelete] = useState<string | null>(null);
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [editedName, setEditedName] = useState('');
+  
+  // Double tap handling
+  const lastTapRef = useRef<number>(0);
+  const DOUBLE_TAP_DELAY = 300;
 
   const handleScanSingle = () => {
     setAsActive();
@@ -60,6 +66,33 @@ export default function SessionDetailScreen() {
     );
   };
 
+  const handleNameDoubleTap = () => {
+    const now = Date.now();
+    const timeSinceLastTap = now - lastTapRef.current;
+    
+    if (timeSinceLastTap < DOUBLE_TAP_DELAY) {
+      // Double tap detected
+      setEditedName(session?.name || '');
+      setIsEditingName(true);
+      lastTapRef.current = 0; // Reset
+    } else {
+      // First tap
+      lastTapRef.current = now;
+    }
+  };
+
+  const handleNameSubmit = async () => {
+    const trimmedName = editedName.trim();
+    if (trimmedName && trimmedName !== session?.name) {
+      await updateName(trimmedName);
+    }
+    setIsEditingName(false);
+  };
+
+  const handleNameBlur = () => {
+    handleNameSubmit();
+  };
+
   if (!session) {
     return (
       <ScreenContainer>
@@ -74,15 +107,32 @@ export default function SessionDetailScreen() {
 
   return (
     <ScreenContainer>
-      <PageHeader
-        title={session.name}
-        showBackButton
-        rightAction={
-          <Pressable onPress={handleDeleteSession} hitSlop={8}>
-            <Text style={styles.deleteIcon}>🗑️</Text>
-          </Pressable>
-        }
-      />
+      <Pressable onPress={handleNameDoubleTap} disabled={isEditingName}>
+        <PageHeader
+          title={isEditingName ? '' : session.name}
+          showBackButton
+          rightAction={
+            <Pressable onPress={handleDeleteSession} hitSlop={8}>
+              <FontAwesome6 name="trash-can" size={20} color={tokens.colors.text} />
+            </Pressable>
+          }
+        />
+      </Pressable>
+
+      {isEditingName && (
+        <View style={styles.nameEditContainer}>
+          <TextInput
+            style={styles.nameInput}
+            value={editedName}
+            onChangeText={setEditedName}
+            onBlur={handleNameBlur}
+            onSubmitEditing={handleNameSubmit}
+            autoFocus
+            selectTextOnFocus
+            returnKeyType="done"
+          />
+        </View>
+      )}
 
       <View style={styles.sessionInfo}>
         <View style={styles.stat}>
@@ -113,10 +163,13 @@ export default function SessionDetailScreen() {
             style={styles.productList}
             contentContainerStyle={styles.productListContent}
           >
-            <Text style={styles.placeholderText}>
-              Product list will appear here once products are scanned
-            </Text>
-            {/* TODO: Product cards will go here in next phase */}
+            {session.scannedProducts.map((product, index) => (
+              <ScannedProductItem
+                key={product.id}
+                product={product}
+                index={index}
+              />
+            ))}
           </ScrollView>
         )}
       </View>
@@ -125,6 +178,20 @@ export default function SessionDetailScreen() {
 }
 
 const styles = StyleSheet.create({
+  nameEditContainer: {
+    paddingHorizontal: tokens.spacing.lg,
+    paddingBottom: tokens.spacing.sm,
+  },
+  nameInput: {
+    fontSize: tokens.typography.heading2.fontSize,
+    fontWeight: tokens.typography.heading2.fontWeight as any,
+    color: tokens.colors.text,
+    padding: tokens.spacing.sm,
+    borderWidth: 2,
+    borderColor: tokens.colors.primary,
+    borderRadius: tokens.borderRadius.md,
+    backgroundColor: tokens.colors.backgroundSecondary,
+  },
   sessionInfo: {
     paddingHorizontal: tokens.spacing.lg,
     paddingVertical: tokens.spacing.md,
@@ -141,9 +208,6 @@ const styles = StyleSheet.create({
     fontSize: tokens.typography.body.fontSize,
     color: tokens.colors.textSecondary,
     marginTop: tokens.spacing.xs,
-  },
-  deleteIcon: {
-    fontSize: 24,
   },
   divider: {
     height: 1,
@@ -165,11 +229,5 @@ const styles = StyleSheet.create({
   },
   productListContent: {
     paddingBottom: tokens.spacing.xl,
-  },
-  placeholderText: {
-    fontSize: tokens.typography.body.fontSize,
-    color: tokens.colors.textSecondary,
-    textAlign: 'center',
-    marginTop: tokens.spacing.xl,
   },
 });

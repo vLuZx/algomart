@@ -20,12 +20,12 @@ export function useSession(sessionId: string) {
 
   const session = useMemo(() => getSession(sessionId), [getSession, sessionId]);
 
-  const addProduct = useCallback((barcode: string) => {
-    return addProductToSession(sessionId, barcode);
+  const addProduct = useCallback((barcode: string, barcodeType: string) => {
+    return addProductToSession(sessionId, barcode, barcodeType);
   }, [addProductToSession, sessionId]);
 
-  const removeProduct = useCallback(async (barcode: string) => {
-    await removeProductFromSession(sessionId, barcode);
+  const removeProduct = useCallback(async (productId: string) => {
+    await removeProductFromSession(sessionId, productId);
   }, [removeProductFromSession, sessionId]);
 
   const deleteCurrentSession = useCallback(async () => {

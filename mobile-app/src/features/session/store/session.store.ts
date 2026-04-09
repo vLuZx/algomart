@@ -4,7 +4,7 @@
  */
 
 import { create } from 'zustand';
-import type { Session, SessionMode } from '../types/session.types';
+import type { Session, SessionMode, ScannedProduct } from '../types/session.types';
 import { loadSessions, saveSessions } from '../utils/session-storage';
 import { generateSessionName, generateUUID } from '../utils/session-name-generator';
 
@@ -19,8 +19,8 @@ interface SessionState {
   createSession: (name?: string) => string;
   deleteSession: (id: string) => Promise<void>;
   setActiveSession: (id: string) => void;
-  addProductToSession: (sessionId: string, barcode: string) => boolean;
-  removeProductFromSession: (sessionId: string, barcode: string) => Promise<void>;
+  addProductToSession: (sessionId: string, barcode: string, barcodeType: string) => boolean;
+  removeProductFromSession: (sessionId: string, productId: string) => Promise<void>;
   updateSessionName: (id: string, name: string) => Promise<void>;
   updateSessionMode: (id: string, mode: SessionMode) => void;
   
@@ -50,23 +50,24 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   // Create a new session
   createSession: (name?: string) => {
     const id = generateUUID();
-    const sessionName = name || generateSessionName();
+    const sessions = get().sessions;
+    const sessionName = name || generateSessionName(sessions.length);
     
     const newSession: Session = {
       id,
       name: sessionName,
       createdAt: Date.now(),
       updatedAt: Date.now(),
-      scannedBarcodes: [],
+      scannedProducts: [],
       productCount: 0,
       lastUsedMode: null,
     };
     
-    const sessions = [...get().sessions, newSession];
-    set({ sessions, activeSessionId: id });
+    const updatedSessions = [...sessions, newSession];
+    set({ sessions: updatedSessions, activeSessionId: id });
     
     // Save to storage (fire and forget)
-    saveSessions(sessions).catch(console.error);
+    saveSessions(updatedSessions).catch(console.error);
     
     return id;
   },
@@ -86,7 +87,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
   
   // Add product to session
-  addProductToSession: (sessionId: string, barcode: string) => {
+  addProductToSession: (sessionId: string, barcode: string, barcodeType: string) => {
     const sessions = get().sessions;
     const session = sessions.find(s => s.id === sessionId);
     
@@ -95,15 +96,28 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       return false;
     }
     
-    // Check for duplicate
-    if (session.scannedBarcodes.includes(barcode)) {
+    // Ensure scannedProducts array exists (migration safety)
+    if (!session.scannedProducts) {
+      session.scannedProducts = [];
+    }
+    
+    // Check for duplicate barcode
+    if (session.scannedProducts.some(p => p.barcode === barcode)) {
       console.log('Duplicate barcode:', barcode);
       return false;
     }
     
-    // Add barcode
-    session.scannedBarcodes.push(barcode);
-    session.productCount = session.scannedBarcodes.length;
+    // Create new scanned product
+    const newProduct: ScannedProduct = {
+      id: generateUUID(),
+      barcode,
+      type: barcodeType,
+      scannedAt: Date.now(),
+    };
+    
+    // Add product
+    session.scannedProducts.push(newProduct);
+    session.productCount = session.scannedProducts.length;
     session.updatedAt = Date.now();
     
     set({ sessions: [...sessions] });
@@ -115,14 +129,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
   
   // Remove product from session
-  removeProductFromSession: async (sessionId: string, barcode: string) => {
+  removeProductFromSession: async (sessionId: string, productId: string) => {
     const sessions = get().sessions;
     const session = sessions.find(s => s.id === sessionId);
     
     if (!session) return;
     
-    session.scannedBarcodes = session.scannedBarcodes.filter(b => b !== barcode);
-    session.productCount = session.scannedBarcodes.length;
+    session.scannedProducts = session.scannedProducts.filter(p => p.id !== productId);
+    session.productCount = session.scannedProducts.length;
     session.updatedAt = Date.now();
     
     set({ sessions: [...sessions] });
@@ -165,6 +179,6 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   // Check if product is in session
   isProductInSession: (sessionId: string, barcode: string) => {
     const session = get().sessions.find(s => s.id === sessionId);
-    return session?.scannedBarcodes.includes(barcode) ?? false;
+    return session?.scannedProducts?.some(p => p.barcode === barcode) ?? false;
   },
 }));

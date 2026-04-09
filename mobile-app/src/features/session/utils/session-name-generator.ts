@@ -4,21 +4,11 @@
  */
 
 /**
- * Generate a session name based on current date/time
- * Format: "Session Mar 15, 2:30 PM"
+ * Generate a numbered session name
+ * Format: "Session 1", "Session 2", etc.
  */
-export function generateSessionName(): string {
-  const now = new Date();
-  
-  const month = now.toLocaleString('en-US', { month: 'short' });
-  const day = now.getDate();
-  const time = now.toLocaleString('en-US', { 
-    hour: 'numeric', 
-    minute: '2-digit',
-    hour12: true 
-  });
-  
-  return `Session ${month} ${day}, ${time}`;
+export function generateSessionName(existingSessionCount: number = 0): string {
+  return `Session ${existingSessionCount + 1}`;
 }
 
 /**

@@ -18,7 +18,7 @@ import { tokens } from '../constants/tokens';
 
 export default function SessionSelectScreen() {
   const router = useRouter();
-  const { sessions, isLoading, createSession, deleteSession } = useSessions();
+  const { sessions, isLoading, createSession, deleteSession, updateSessionName } = useSessions();
   
   const [sessionToDelete, setSessionToDelete] = useState<string | null>(null);
 
@@ -33,6 +33,10 @@ export default function SessionSelectScreen() {
 
   const handleDeleteSession = (sessionId: string) => {
     setSessionToDelete(sessionId);
+  };
+
+  const handleRenameSession = async (sessionId: string, newName: string) => {
+    await updateSessionName(sessionId, newName);
   };
 
   const confirmDelete = async () => {
@@ -91,6 +95,7 @@ export default function SessionSelectScreen() {
                 session={session}
                 onPress={() => handleOpenSession(session.id)}
                 onDelete={() => handleDeleteSession(session.id)}
+                onRename={(newName) => handleRenameSession(session.id, newName)}
               />
             ))
           )}

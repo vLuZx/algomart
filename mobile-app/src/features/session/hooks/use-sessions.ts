@@ -13,6 +13,7 @@ export function useSessions() {
     loadSessions,
     createSession,
     deleteSession,
+    updateSessionName,
   } = useSessionStore();
 
   // Load sessions on mount
@@ -25,5 +26,6 @@ export function useSessions() {
     isLoading,
     createSession,
     deleteSession,
+    updateSessionName,
   };
 }
