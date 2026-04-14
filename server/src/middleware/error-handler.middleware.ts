@@ -1,15 +1,10 @@
-import type { Request, Response, NextFunction } from 'express';
+import type { Request, Response } from 'express';
 import type { ApiErrorResponse } from '../types/amazon.types.js';
 
 /**
  * Global error handling middleware
  */
-export function errorHandler(
-  error: any,
-  req: Request,
-  res: Response,
-  next: NextFunction
-): void {
+export function errorHandler(error: any, req: Request, res: Response): void {
   console.error('Error:', {
     message: error.message,
     stack: error.stack,
