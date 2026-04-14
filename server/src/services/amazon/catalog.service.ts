@@ -1,7 +1,6 @@
 import amazonClient from './client.service.js';
 import type {
 	BarcodeType,
-	CatalogItem,
 	CatalogSearchResponse,
 } from '../../types/amazon.types.js';
 import { inferBarcodeType,  isValidBarcode } from '../../utils/barcode.utils.js';
