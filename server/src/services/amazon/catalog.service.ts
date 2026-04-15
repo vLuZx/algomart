@@ -23,7 +23,7 @@ class AmazonCatalogService {
 	/**
 	 * Search catalog items by barcode
 	 */
-	async searchCatalogItemsByBarcode(barcode: string): Promise<any> {
+	async searchCatalogItemsByBarcode(barcode: string): Promise<CatalogSearchResponse> {
 
 		// Trim the barcode
 		const cleanBarcode = barcode.trim();
@@ -48,8 +48,21 @@ class AmazonCatalogService {
 		} 
 		// Error Case: Bad response
 		catch (error) {
-			console.log(error + `Message: Failed to search catalog for ${resolvedIdentifierType} ${cleanBarcode}`);
+			throw this.createHttpError(`
+				Error: ${error}, 
+				Message: Failed to search catalog for ${resolvedIdentifierType} ${cleanBarcode}`, 500, 'AmazonCatalogSearchError'
+			);
 		}
+	}
+
+	public getASIN(catalogSearchResponse: CatalogSearchResponse): string  {
+		if (catalogSearchResponse.numberOfResults > 1) {
+			throw this.createHttpError("Message: too many items mapped to same identifier.", 500, 'TooManyResultsInCatalogSearchResponse');
+		}
+		if (catalogSearchResponse.numberOfResults === 0 || !catalogSearchResponse.items[0]) {
+			throw this.createHttpError("Message: no product found.", 500, 'NoResultInCatalogSearchResponse');
+		}
+		return catalogSearchResponse.items[0].asin;
 	}
 
 }

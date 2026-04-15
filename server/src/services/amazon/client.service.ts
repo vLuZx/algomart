@@ -191,8 +191,26 @@ class AmazonClientService {
 		const normalizedHeaders: AmazonRequestHeaders = {};
 
 		for (const [key, value] of Object.entries(rawHeaders)) {
-			if (value !== undefined) {
+			if (typeof value === 'string') {
+				normalizedHeaders[key] = value;
+				continue;
+			}
+
+			if (typeof value === 'number' || typeof value === 'boolean') {
 				normalizedHeaders[key] = String(value);
+				continue;
+			}
+
+			if (Array.isArray(value)) {
+				normalizedHeaders[key] = value
+					.filter(
+						(entry): entry is string | number | boolean =>
+							typeof entry === 'string' ||
+							typeof entry === 'number' ||
+							typeof entry === 'boolean'
+					)
+					.map(String)
+					.join(',');
 			}
 		}
 
