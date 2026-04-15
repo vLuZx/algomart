@@ -1,139 +1,279 @@
 /**
- * Session Select Screen
- * Landing page - List all sessions and create new ones
+ * Sessions Screen
+ *
+ * Lists all scanning sessions with search, create, and delete.
  */
 
-import React, { useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Alert } from 'react-native';
-import { useRouter } from 'expo-router';
-import { ScreenContainer } from '../components/layout/ScreenContainer';
-import { PageHeader } from '../components/layout/PageHeader';
-import { SessionCard } from '../components/session/SessionCard';
-import { Button } from '../components/ui/Button';
-import { LoadingSpinner } from '../components/ui/LoadingSpinner';
-import { EmptyState } from '../components/ui/EmptyState';
-import { ConfirmDialog } from '../components/ui/ConfirmDialog';
-import { useSessions } from '../features/session/hooks/use-sessions';
-import { tokens } from '../constants/tokens';
+import { useState, useMemo } from 'react';
+import {
+  View,
+  Text,
+  TextInput,
+  Pressable,
+  FlatList,
+  Alert,
+  StyleSheet,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSessions } from '../store/sessions';
+import { colors, font, spacing, radius, shared } from '../constants/theme';
+import type { Session } from '../types/session';
 
-export default function SessionSelectScreen() {
-  const router = useRouter();
-  const { sessions, isLoading, createSession, deleteSession, updateSessionName } = useSessions();
-  
-  const [sessionToDelete, setSessionToDelete] = useState<string | null>(null);
+// ── Helpers ──────────────────────────────────────────────────────────
 
-  const handleCreateSession = () => {
-    const sessionId = createSession();
-    router.push(`/session/${sessionId}` as any);
-  };
+function timeAgo(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60_000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  return `${days}d ago`;
+}
 
-  const handleOpenSession = (sessionId: string) => {
-    router.push(`/session/${sessionId}` as any);
-  };
+// ── Main component ───────────────────────────────────────────────────
 
-  const handleDeleteSession = (sessionId: string) => {
-    setSessionToDelete(sessionId);
-  };
+export default function SessionsScreen() {
+  const { sessions, addSession, deleteSession } = useSessions();
+  const [search, setSearch] = useState('');
 
-  const handleRenameSession = async (sessionId: string, newName: string) => {
-    await updateSessionName(sessionId, newName);
-  };
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return sessions;
+    return sessions.filter((s) => s.name.toLowerCase().includes(q));
+  }, [sessions, search]);
 
-  const confirmDelete = async () => {
-    if (!sessionToDelete) return;
-    
-    try {
-      await deleteSession(sessionToDelete);
-      setSessionToDelete(null);
-    } catch (error) {
-      Alert.alert('Error', 'Failed to delete session');
-    }
-  };
-
-  if (isLoading) {
-    return (
-      <ScreenContainer>
-        <View style={styles.loadingContainer}>
-          <LoadingSpinner size="large" />
-        </View>
-      </ScreenContainer>
+  const handleNew = () => {
+    Alert.prompt(
+      'New Session',
+      'Enter a name for this session',
+      (name) => {
+        const trimmed = name?.trim();
+        if (trimmed) addSession(trimmed);
+      },
+      'plain-text',
+      '',
+      'default',
     );
-  }
+  };
+
+  const handleDelete = (session: Session) => {
+    Alert.alert(
+      'Delete Session',
+      `Delete "${session.name}"? This cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => deleteSession(session.id),
+        },
+      ],
+    );
+  };
+
+  const renderItem = ({ item }: { item: Session }) => (
+    <View style={styles.card}>
+      <View style={shared.rowBetween}>
+        {/* Left side */}
+        <View style={{ flex: 1 }}>
+          <Text style={styles.cardTitle}>{item.name}</Text>
+          <View style={[shared.row, { marginTop: spacing.sm, gap: spacing.sm }]}>
+            <Text style={styles.boxIcon}>📦</Text>
+            <Text style={styles.productCount}>{item.productCount}</Text>
+            <Text style={styles.countLabel}>products</Text>
+            <Text style={styles.dot}>·</Text>
+            <Text style={styles.timeAgo}>{timeAgo(item.updatedAt)}</Text>
+          </View>
+        </View>
+
+        {/* Delete button */}
+        <Pressable
+          style={({ pressed }) => [
+            styles.deleteBtn,
+            pressed && styles.deleteBtnPressed,
+          ]}
+          onPress={() => handleDelete(item)}
+          hitSlop={12}
+        >
+          <Text style={styles.deleteIcon}>🗑</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
 
   return (
-    <ScreenContainer>
-      <PageHeader 
-        title="Algomart" 
-        subtitle="Product Analysis Sessions"
-      />
-
-      <View style={styles.content}>
-        <View style={styles.actionContainer}>
-          <Button
-            title="Start New Session"
-            onPress={handleCreateSession}
-            variant="primary"
-            size="large"
-            fullWidth
-          />
-        </View>
-
-        <ScrollView 
-          style={styles.sessionList}
-          contentContainerStyle={styles.sessionListContent}
-          showsVerticalScrollIndicator={false}
+    <SafeAreaView style={shared.screen}>
+      {/* Header */}
+      <View style={[shared.rowBetween, styles.header]}>
+        <Text style={font.heading}>Sessions</Text>
+        <Pressable
+          style={({ pressed }) => [
+            styles.newBtn,
+            pressed && styles.newBtnPressed,
+          ]}
+          onPress={handleNew}
         >
-          {sessions.length === 0 ? (
-            <EmptyState
-              title="No sessions yet"
-              message="Start your first session to begin scanning products"
-            />
-          ) : (
-            sessions.map((session) => (
-              <SessionCard
-                key={session.id}
-                session={session}
-                onPress={() => handleOpenSession(session.id)}
-                onDelete={() => handleDeleteSession(session.id)}
-                onRename={(newName) => handleRenameSession(session.id, newName)}
-              />
-            ))
-          )}
-        </ScrollView>
+          <Text style={styles.newBtnText}>+ New</Text>
+        </Pressable>
       </View>
 
-      <ConfirmDialog
-        visible={sessionToDelete !== null}
-        title="Delete Session"
-        message="Are you sure you want to delete this session? This action cannot be undone."
-        onConfirm={confirmDelete}
-        onCancel={() => setSessionToDelete(null)}
-        confirmLabel="Delete"
-        cancelLabel="Cancel"
-        destructive
+      {/* Search */}
+      <View style={[shared.content, { marginBottom: spacing.lg }]}>
+        <View style={styles.searchContainer}>
+          <Text style={styles.searchIcon}>🔍</Text>
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Search sessions..."
+            placeholderTextColor={colors.textMuted}
+            value={search}
+            onChangeText={setSearch}
+            returnKeyType="search"
+            autoCorrect={false}
+          />
+        </View>
+      </View>
+
+      {/* List */}
+      <FlatList
+        data={filtered}
+        keyExtractor={(item) => item.id}
+        renderItem={renderItem}
+        contentContainerStyle={styles.list}
+        ItemSeparatorComponent={() => <View style={{ height: spacing.md }} />}
+        ListEmptyComponent={
+          <View style={styles.emptyContainer}>
+            <Text style={styles.emptyIcon}>📋</Text>
+            <Text style={styles.emptyTitle}>No sessions yet</Text>
+            <Text style={styles.emptySubtitle}>
+              Tap <Text style={{ color: colors.accent, fontWeight: '600' }}>+ New</Text> to create your first scanning session
+            </Text>
+          </View>
+        }
       />
-    </ScreenContainer>
+    </SafeAreaView>
   );
 }
 
+// ── Styles ───────────────────────────────────────────────────────────
+
 const styles = StyleSheet.create({
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
+  header: {
+    paddingHorizontal: spacing.xl,
+    paddingTop: spacing.lg,
+    paddingBottom: spacing.xl,
+  },
+
+  /* "+ New" button */
+  newBtn: {
+    backgroundColor: colors.accent,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm + 2,
+  },
+  newBtnPressed: {
+    backgroundColor: colors.accentDark,
+  },
+  newBtnText: {
+    color: colors.bg,
+    fontSize: 15,
+    fontWeight: '700',
+  },
+
+  /* Search */
+  searchContainer: {
+    flexDirection: 'row',
     alignItems: 'center',
+    backgroundColor: colors.bgCard,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingHorizontal: spacing.lg,
+    height: 48,
   },
-  content: {
+  searchIcon: {
+    fontSize: 16,
+    marginRight: spacing.sm,
+  },
+  searchInput: {
     flex: 1,
+    color: colors.textPrimary,
+    fontSize: 15,
   },
-  actionContainer: {
-    paddingHorizontal: tokens.spacing.lg,
-    paddingBottom: tokens.spacing.lg,
+
+  /* List */
+  list: {
+    paddingHorizontal: spacing.xl,
+    paddingBottom: spacing.xxl,
   },
-  sessionList: {
-    flex: 1,
-    paddingHorizontal: tokens.spacing.lg,
+
+  /* Card */
+  card: {
+    backgroundColor: colors.bgCard,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.lg,
   },
-  sessionListContent: {
-    paddingBottom: tokens.spacing.xl,
+  cardTitle: {
+    ...font.title,
+  },
+  boxIcon: {
+    fontSize: 14,
+  },
+  productCount: {
+    color: colors.accent,
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  countLabel: {
+    color: colors.accent,
+    fontSize: 14,
+  },
+  dot: {
+    color: colors.textMuted,
+    fontSize: 14,
+  },
+  timeAgo: {
+    color: colors.textMuted,
+    fontSize: 13,
+  },
+
+  /* Delete button */
+  deleteBtn: {
+    backgroundColor: colors.dangerMuted,
+    borderRadius: radius.md,
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  deleteBtnPressed: {
+    backgroundColor: 'rgba(229, 77, 77, 0.25)',
+  },
+  deleteIcon: {
+    fontSize: 18,
+  },
+
+  /* Empty state */
+  emptyContainer: {
+    alignItems: 'center',
+    paddingTop: 80,
+    paddingHorizontal: spacing.xl,
+  },
+  emptyIcon: {
+    fontSize: 48,
+    marginBottom: spacing.lg,
+  },
+  emptyTitle: {
+    ...font.title,
+    fontSize: 20,
+    marginBottom: spacing.sm,
+  },
+  emptySubtitle: {
+    ...font.body,
+    textAlign: 'center',
+    lineHeight: 20,
   },
 });
