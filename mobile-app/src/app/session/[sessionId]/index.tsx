@@ -16,6 +16,7 @@ import {
   ChevronDown,
   ChevronLeft,
   PenLine,
+  RefreshCw,
   ScanLine,
   Search,
   SlidersHorizontal,
@@ -24,6 +25,7 @@ import {
 import { SafeAreaView as InsetsSafeAreaView } from 'react-native-safe-area-context';
 import { ProductCard } from '../../../components/ProductCard';
 import { GradientButton } from '../../../components/GradientButton';
+import { ResyncAllModal } from '../../../components/ResyncAllModal';
 import { colors, font, radius, shadows } from '../../../constants/theme';
 import { useSessions } from '../../../store/sessions';
 import type { SessionProduct } from '../../../types/product';
@@ -111,6 +113,7 @@ export default function SessionDetailScreen() {
   const [selectedPopularity, setSelectedPopularity] = useState<string[]>([]);
   const [sortBy, setSortBy] = useState<SortOption>('profit-desc');
   const [sortModalVisible, setSortModalVisible] = useState(false);
+  const [showResyncModal, setShowResyncModal] = useState(false);
 
   const categories = useMemo(
     () => Array.from(new Set(products.map((product) => product.category))),
@@ -144,6 +147,7 @@ export default function SessionDetailScreen() {
     searchQuery.trim().length > 0 || selectedCategories.length > 0 || selectedPopularity.length > 0;
 
   const selectedSortLabel = sortOptions.find((option) => option.value === sortBy)?.label ?? 'Sort';
+  const productNames = useMemo(() => products.map((product) => product.title), [products]);
 
   const listEmptyTitle = searchQuery.trim().length > 0 || hasActiveFilters ? 'No products found' : 'No products yet';
   const listEmptySubtitle =
@@ -182,11 +186,20 @@ export default function SessionDetailScreen() {
 
   const listHeader = (
     <View style={styles.controlsSection}>
-      <GradientButton
-        label="Scan Products"
-        icon={<ScanLine size={16} color={colors.accentText} strokeWidth={2.5} />}
-        onPress={() => router.push(`/session/${sessionId}/scan`)}
-      />
+      <View style={styles.ctaRow}>
+        <GradientButton
+          label="Scan Products"
+          icon={<ScanLine size={16} color={colors.accentText} strokeWidth={2.5} />}
+          onPress={() => router.push(`/session/${sessionId}/scan`)}
+          style={styles.scanButtonWrap}
+          contentStyle={styles.scanButtonContent}
+        />
+
+        <Pressable style={styles.resyncButton} onPress={() => setShowResyncModal(true)}>
+          <RefreshCw size={16} color={colors.textMuted} strokeWidth={2.1} />
+          <Text style={styles.resyncButtonText}>Resync All</Text>
+        </Pressable>
+      </View>
 
       <View style={styles.searchWrap}>
         <Search size={16} color={colors.textSubtle} strokeWidth={2.2} />
@@ -414,6 +427,12 @@ export default function SessionDetailScreen() {
           </View>
         </Pressable>
       </Modal>
+
+      <ResyncAllModal
+        visible={showResyncModal}
+        productNames={productNames}
+        onClose={() => setShowResyncModal(false)}
+      />
     </InsetsSafeAreaView>
   );
 }
@@ -500,6 +519,34 @@ const styles = StyleSheet.create({
   controlsSection: {
     paddingBottom: 18,
     gap: 14,
+  },
+  ctaRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  scanButtonWrap: {
+    flex: 1,
+  },
+  scanButtonContent: {
+    minHeight: 48,
+  },
+  resyncButton: {
+    minHeight: 48,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.bgCardMuted,
+    paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    ...shadows.soft,
+  },
+  resyncButtonText: {
+    color: colors.textMuted,
+    fontSize: font.sizeSm,
+    fontWeight: font.weightMedium,
   },
   searchWrap: {
     flexDirection: 'row',
