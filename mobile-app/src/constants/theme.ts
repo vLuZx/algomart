@@ -1,101 +1,52 @@
-/**
- * App-wide design tokens and reusable style helpers.
- */
-
-import { StyleSheet } from 'react-native';
-
-// Color palette
-
+// Design tokens matching figma — zinc/amber dark palette
 export const colors = {
-  bg: '#0D0D0F',
-  bgCard: '#1A1A1E',
-  bgCardPressed: '#222226',
-  bgInput: '#151517',
+  // Backgrounds
+  bg: '#18181b',        // zinc-900
+  bgCard: '#27272a',    // zinc-800
 
-  accent: '#F5A623',
-  accentDark: '#C4841A',
-  accentMuted: 'rgba(245, 166, 35, 0.12)',
+  // Text
+  text: '#ffffff',
+  textMuted: '#a1a1aa', // zinc-400
+  textSubtle: '#71717a', // zinc-500
+  textFaint: '#52525b', // zinc-600
 
-  textPrimary: '#FFFFFF',
-  textSecondary: '#A0A0A8',
-  textMuted: '#666670',
+  // Accent (amber)
+  accent: '#f59e0b',    // amber-500
+  accentDark: '#d97706', // amber-600
+  accentText: '#1c1917', // zinc-900 (text on amber buttons)
 
-  danger: '#E54D4D',
-  dangerMuted: 'rgba(229, 77, 77, 0.12)',
-  success: '#4CAF50',
+  // Destructive (red)
+  destructiveBg: 'rgba(239, 68, 68, 0.1)', // red-500/10
+  destructiveIcon: '#f87171',               // red-400
 
-  border: '#2A2A2E',
-  borderLight: '#333338',
-} as const;
+  // Border / separator
+  border: 'rgba(255, 255, 255, 0.06)',      // zinc-800/50 equivalent
+};
 
-// Typography
-
-export const font = {
-  heading: {
-    fontSize: 28,
-    fontWeight: '700' as const,
-    color: colors.textPrimary,
-  },
-  title: {
-    fontSize: 17,
-    fontWeight: '600' as const,
-    color: colors.textPrimary,
-  },
-  body: {
-    fontSize: 14,
-    fontWeight: '400' as const,
-    color: colors.textSecondary,
-  },
-  caption: {
-    fontSize: 12,
-    fontWeight: '400' as const,
-    color: colors.textMuted,
-  },
-} as const;
-
-// Spacing / Radius
+export const radius = {
+  sm: 8,
+  md: 12,
+  lg: 16,
+  xl: 20,
+  full: 9999,
+};
 
 export const spacing = {
   xs: 4,
   sm: 8,
   md: 12,
   lg: 16,
-  xl: 24,
-  xxl: 32,
-} as const;
-
-export const radius = {
-  sm: 6,
-  md: 10,
-  lg: 14,
   xl: 20,
-  full: 9999,
-} as const;
+  xxl: 24,
+};
 
-// Shared styles
-
-export const shared = StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: colors.bg,
-  },
-  content: {
-    paddingHorizontal: spacing.xl,
-  },
-  card: {
-    backgroundColor: colors.bgCard,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: spacing.lg,
-  },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  rowBetween: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-});
+export const font = {
+  sizeXs: 12,
+  sizeSm: 14,
+  sizeMd: 16,
+  sizeLg: 20,
+  sizeXl: 24,
+  weightNormal: '400' as const,
+  weightMedium: '500' as const,
+  weightSemibold: '600' as const,
+};

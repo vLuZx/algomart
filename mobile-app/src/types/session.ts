@@ -1,13 +1,7 @@
-/**
- * Session types.
- *
- * A session is a named group of scanned products.
- */
-
 export interface Session {
   id: string;
-  name: string;
+  title: string;
   productCount: number;
-  createdAt: string;
-  updatedAt: string;
+  createdAt: string;   // ISO date string
+  updatedAt: string;   // ISO date string
 }
