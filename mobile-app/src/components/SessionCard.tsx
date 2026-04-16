@@ -2,14 +2,15 @@ import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Package, Trash2 } from 'lucide-react-native';
 import { formatDistanceToNow } from 'date-fns';
+import { colors, font, radius, shadows } from '../constants/theme';
 
 interface SessionCardProps {
-  id: string;
-  title: string;
-  lastUpdated: string; // ISO string
-  productCount: number;
-  onPress: (id: string) => void;
-  onDelete: (id: string) => void;
+  readonly id: string;
+  readonly title: string;
+  readonly lastUpdated: string;
+  readonly productCount: number;
+  readonly onPress: (id: string) => void;
+  readonly onDelete: (id: string) => void;
 }
 
 export function SessionCard({
@@ -19,7 +20,7 @@ export function SessionCard({
   productCount,
   onPress,
   onDelete,
-}: SessionCardProps) {
+}: Readonly<SessionCardProps>) {
   const timeAgo = formatDistanceToNow(new Date(lastUpdated), { addSuffix: true });
 
   return (
@@ -62,14 +63,12 @@ export function SessionCard({
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: '#27272a',
-    borderRadius: 16,
+    backgroundColor: colors.bgCard,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
     padding: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 6,
+    ...shadows.card,
   },
   cardPressed: {
     opacity: 0.85,
@@ -84,9 +83,9 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   title: {
-    color: '#ffffff',
-    fontSize: 16,
-    fontWeight: '500',
+    color: colors.text,
+    fontSize: font.sizeMd,
+    fontWeight: font.weightMedium,
     marginBottom: 8,
   },
   meta: {
@@ -95,32 +94,28 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   count: {
-    color: '#f59e0b',
+    color: colors.accent,
     fontSize: 13,
-    fontWeight: '600',
+    fontWeight: font.weightSemibold,
   },
   metaText: {
-    color: '#a1a1aa',
+    color: colors.textMuted,
     fontSize: 13,
   },
   dot: {
-    color: '#52525b',
+    color: colors.textFaint,
     fontSize: 13,
   },
   deleteBtn: {
     width: 40,
     height: 40,
-    borderRadius: 8,
-    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+    borderRadius: radius.sm,
+    backgroundColor: colors.dangerSoft,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 4,
-    elevation: 2,
+    ...shadows.soft,
   },
   deleteBtnPressed: {
-    backgroundColor: 'rgba(239, 68, 68, 0.2)',
+    backgroundColor: 'rgba(248, 113, 113, 0.18)',
   },
 });

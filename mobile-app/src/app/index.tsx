@@ -1,38 +1,49 @@
-/**
- * Sessions Screen — ported from Figma design
- * Dark zinc theme with amber accents, lucide icons, pagination + search.
- */
-
-import React, { useState, useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
-  View,
+  FlatList,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  Pressable,
+  StatusBar,
+  StyleSheet,
   Text,
   TextInput,
-  Pressable,
-  FlatList,
-  Alert,
-  StyleSheet,
-  StatusBar,
+  View,
 } from 'react-native';
+import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Plus, Search, ChevronLeft, ChevronRight } from 'lucide-react-native';
 import { useSessions } from '../store/sessions';
 import { SessionCard } from '../components/SessionCard';
+import { GradientButton } from '../components/GradientButton';
+import { colors, font, gradients, radius, shadows } from '../constants/theme';
 import type { Session } from '../types/session';
 
 const SESSIONS_PER_PAGE = 10;
+
+function ListSeparator() {
+  return <View style={{ height: 10 }} />;
+}
 
 export default function SessionsScreen() {
   const { sessions, addSession, deleteSession } = useSessions();
   const [searchQuery, setSearchQuery] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [searchFocused, setSearchFocused] = useState(false);
+  const [createVisible, setCreateVisible] = useState(false);
+  const [draftSessionName, setDraftSessionName] = useState('');
+  const [draftError, setDraftError] = useState('');
 
-  // ── Filter + paginate ──────────────────────────────────────────
   const filtered = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    if (!q) return sessions;
-    return sessions.filter((s) => s.title.toLowerCase().includes(q));
+
+    if (!q) {
+      return sessions;
+    }
+
+    return sessions.filter((session) => session.title.toLowerCase().includes(q));
   }, [sessions, searchQuery]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / SESSIONS_PER_PAGE));
@@ -42,39 +53,19 @@ export default function SessionsScreen() {
     return filtered.slice(start, start + SESSIONS_PER_PAGE);
   }, [filtered, currentPage]);
 
-  // ── Handlers ──────────────────────────────────────────────────
   const handleSearchChange = (query: string) => {
     setSearchQuery(query);
     setCurrentPage(1);
   };
 
-  const handleNewSession = () => {
-    Alert.prompt(
-      'New Session',
-      'Enter a name for this session',
-      (name) => {
-        const trimmed = name?.trim();
-        if (trimmed) addSession(trimmed);
-      },
-      'plain-text',
-      '',
-      'default',
-    );
+  const openCreateModal = () => {
+    setDraftSessionName('');
+    setDraftError('');
+    setCreateVisible(true);
   };
 
   const handleDelete = (session: Session) => {
-    Alert.alert(
-      'Delete Session',
-      `Delete "${session.title}"? This cannot be undone.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () => deleteSession(session.id),
-        },
-      ],
-    );
+    deleteSession(session.id);
   };
 
   const goToPage = (page: number) => {
@@ -82,14 +73,25 @@ export default function SessionsScreen() {
     setCurrentPage(page);
   };
 
-  // ── Render helpers ────────────────────────────────────────────
+  const handleCreateSession = () => {
+    const trimmed = draftSessionName.trim();
+
+    if (!trimmed) {
+      setDraftError('Please enter a session name.');
+      return;
+    }
+
+    addSession(trimmed);
+    setCreateVisible(false);
+  };
+
   const renderItem = ({ item }: { item: Session }) => (
     <SessionCard
       id={item.id}
       title={item.title}
       lastUpdated={item.updatedAt}
       productCount={item.productCount}
-      onPress={(id) => console.log('Open session:', id)}
+      onPress={(id) => router.push(`/session/${id}`)}
       onDelete={() => handleDelete(item)}
     />
   );
@@ -126,14 +128,17 @@ export default function SessionsScreen() {
               key={page}
               style={({ pressed }) => [
                 styles.pageNumBtn,
-                page === currentPage && styles.pageNumBtnActive,
                 pressed && page !== currentPage && styles.pageBtnPressed,
               ]}
               onPress={() => goToPage(page)}
             >
-              <Text style={[styles.pageNumText, page === currentPage && styles.pageNumTextActive]}>
-                {page}
-              </Text>
+              {page === currentPage ? (
+                <LinearGradient colors={gradients.amber} style={styles.pageNumBtnActive}>
+                  <Text style={styles.pageNumTextActive}>{page}</Text>
+                </LinearGradient>
+              ) : (
+                <Text style={styles.pageNumText}>{page}</Text>
+              )}
             </Pressable>
           ))}
         </View>
@@ -156,55 +161,46 @@ export default function SessionsScreen() {
   const renderEmpty = () => (
     <View style={styles.emptyState}>
       <View style={styles.emptyIcon}>
-        <Search size={32} color="#3f3f46" strokeWidth={1.5} />
+        <Search size={32} color={colors.textFaint} strokeWidth={1.5} />
       </View>
-      <Text style={styles.emptyTitle}>
-        {searchQuery ? 'No sessions found' : 'No sessions yet'}
-      </Text>
+      <Text style={styles.emptyTitle}>{searchQuery ? 'No sessions found' : 'No sessions yet'}</Text>
       <Text style={styles.emptySubtitle}>
-        {searchQuery
-          ? 'Try a different search term'
-          : 'Tap "+ New" to create your first session'}
+        {searchQuery ? 'Try a different search term' : 'Tap New to create your first session'}
       </Text>
     </View>
   );
 
-  // ── Layout ────────────────────────────────────────────────────
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
-      <StatusBar barStyle="light-content" backgroundColor="#18181b" />
+      <StatusBar barStyle="light-content" backgroundColor={colors.bg} />
 
-      {/* Sticky header */}
       <View style={styles.header}>
         <View style={styles.headerTop}>
           <Text style={styles.heading}>Sessions</Text>
-          <Pressable
-            style={({ pressed }) => [styles.newBtn, pressed && styles.newBtnPressed]}
-            onPress={handleNewSession}
-          >
-            <Plus size={18} color="#18181b" strokeWidth={2.5} />
-            <Text style={styles.newBtnText}>New</Text>
-          </Pressable>
+          <GradientButton
+            label="New"
+            icon={<Plus size={18} color={colors.accentText} strokeWidth={2.5} />}
+            onPress={openCreateModal}
+            style={styles.newButtonWrap}
+            contentStyle={styles.newButtonContent}
+          />
         </View>
 
-        {/* Search bar */}
         <View style={[styles.searchBar, searchFocused && styles.searchBarFocused]}>
-          <Search size={18} color="#71717a" strokeWidth={2} />
+          <Search size={18} color={colors.textSubtle} strokeWidth={2} />
           <TextInput
             style={styles.searchInput}
             placeholder="Search sessions..."
-            placeholderTextColor="#71717a"
+            placeholderTextColor={colors.textSubtle}
             value={searchQuery}
             onChangeText={handleSearchChange}
             onFocus={() => setSearchFocused(true)}
             onBlur={() => setSearchFocused(false)}
             returnKeyType="search"
-            clearButtonMode="while-editing"
           />
         </View>
       </View>
 
-      {/* Sessions list */}
       <FlatList
         data={paginated}
         keyExtractor={(item) => item.id}
@@ -212,10 +208,50 @@ export default function SessionsScreen() {
         ListEmptyComponent={renderEmpty}
         ListFooterComponent={renderPagination}
         contentContainerStyle={styles.listContent}
-        ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
+        ItemSeparatorComponent={ListSeparator}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       />
+
+      <Modal transparent visible={createVisible} animationType="fade" onRequestClose={() => setCreateVisible(false)}>
+        <KeyboardAvoidingView
+          style={styles.modalBackdrop}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          <View style={styles.dialog}>
+            <View style={styles.dialogHeader}>
+              <Text style={styles.dialogTitle}>New Session</Text>
+              <Text style={styles.dialogSubtitle}>Enter a name for this session</Text>
+            </View>
+
+            <View style={styles.dialogBody}>
+              <TextInput
+                value={draftSessionName}
+                onChangeText={(value) => {
+                  setDraftSessionName(value);
+                  if (draftError) {
+                    setDraftError('');
+                  }
+                }}
+                placeholder="Spring Collection 2026"
+                placeholderTextColor={colors.textFaint}
+                style={styles.dialogInput}
+                autoFocus
+                returnKeyType="done"
+                onSubmitEditing={handleCreateSession}
+              />
+              {draftError ? <Text style={styles.errorText}>{draftError}</Text> : null}
+            </View>
+
+            <View style={styles.dialogFooter}>
+              <Pressable style={styles.cancelButton} onPress={() => setCreateVisible(false)}>
+                <Text style={styles.cancelButtonText}>Cancel</Text>
+              </Pressable>
+              <GradientButton label="Create" onPress={handleCreateSession} style={styles.createButtonWrap} />
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -223,22 +259,16 @@ export default function SessionsScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#18181b',
+    backgroundColor: colors.bg,
   },
-
-  // ── Header ────────────────────────────────────────────────────
   header: {
-    backgroundColor: '#18181b',
+    backgroundColor: colors.bg,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(39, 39, 42, 0.5)',
+    borderBottomColor: colors.border,
     paddingHorizontal: 20,
     paddingTop: 8,
     paddingBottom: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 6,
-    elevation: 4,
+    ...shadows.soft,
     zIndex: 10,
   },
   headerTop: {
@@ -248,70 +278,43 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   heading: {
-    fontSize: 24,
-    fontWeight: '400',
-    color: '#ffffff',
+    fontSize: font.size2xl,
+    fontWeight: font.weightNormal,
+    color: colors.text,
     letterSpacing: -0.3,
   },
-  newBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 18,
-    height: 44,
-    borderRadius: 10,
-    backgroundColor: '#f59e0b',
-    shadowColor: '#d97706',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.5,
-    shadowRadius: 10,
-    elevation: 6,
+  newButtonWrap: {
+    minWidth: 98,
   },
-  newBtnPressed: {
-    backgroundColor: '#d97706',
-    transform: [{ scale: 0.96 }],
+  newButtonContent: {
+    minHeight: 40,
   },
-  newBtnText: {
-    color: '#18181b',
-    fontSize: 15,
-    fontWeight: '600',
-  },
-
-  // ── Search ────────────────────────────────────────────────────
   searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    backgroundColor: '#27272a',
-    borderRadius: 12,
+    backgroundColor: colors.bgInput,
+    borderRadius: radius.lg,
     paddingHorizontal: 14,
     height: 48,
     borderWidth: 1.5,
     borderColor: 'transparent',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    elevation: 4,
+    ...shadows.soft,
   },
   searchBarFocused: {
-    borderColor: 'rgba(217, 119, 6, 0.4)',
+    borderColor: colors.accentBorder,
   },
   searchInput: {
     flex: 1,
-    color: '#ffffff',
+    color: colors.text,
     fontSize: 15,
     height: '100%',
   },
-
-  // ── List ──────────────────────────────────────────────────────
   listContent: {
     padding: 20,
     paddingBottom: 40,
     flexGrow: 1,
   },
-
-  // ── Empty state ───────────────────────────────────────────────
   emptyState: {
     flex: 1,
     alignItems: 'center',
@@ -326,25 +329,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
+    ...shadows.soft,
   },
   emptyTitle: {
-    color: '#a1a1aa',
+    color: colors.textMuted,
     fontSize: 16,
-    fontWeight: '500',
+    fontWeight: font.weightMedium,
     marginBottom: 4,
   },
   emptySubtitle: {
-    color: '#52525b',
+    color: colors.textFaint,
     fontSize: 13,
     textAlign: 'center',
   },
-
-  // ── Pagination ────────────────────────────────────────────────
   pagination: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -361,15 +358,11 @@ const styles = StyleSheet.create({
   pageBtn: {
     width: 40,
     height: 40,
-    borderRadius: 8,
-    backgroundColor: '#27272a',
+    borderRadius: radius.sm,
+    backgroundColor: colors.bgCard,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.25,
-    shadowRadius: 6,
-    elevation: 3,
+    ...shadows.soft,
   },
   pageBtnDisabled: {
     opacity: 0.3,
@@ -380,31 +373,96 @@ const styles = StyleSheet.create({
   pageNumBtn: {
     width: 40,
     height: 40,
-    borderRadius: 8,
-    backgroundColor: '#27272a',
+    borderRadius: radius.sm,
+    backgroundColor: colors.bgCard,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.25,
-    shadowRadius: 6,
-    elevation: 3,
-  },
-  pageNumBtnActive: {
-    backgroundColor: '#f59e0b',
-    shadowColor: '#d97706',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.5,
-    shadowRadius: 10,
-    elevation: 6,
+    overflow: 'hidden',
+    ...shadows.soft,
   },
   pageNumText: {
-    color: '#a1a1aa',
+    color: colors.textMuted,
     fontSize: 14,
-    fontWeight: '500',
+    fontWeight: font.weightMedium,
   },
   pageNumTextActive: {
-    color: '#18181b',
-    fontWeight: '700',
+    color: colors.accentText,
+    fontWeight: font.weightBold,
+  },
+  pageNumBtnActive: {
+    width: '100%',
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: colors.bgOverlay,
+    justifyContent: 'center',
+    padding: 20,
+  },
+  dialog: {
+    borderRadius: radius.xl,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.bgStrong,
+    overflow: 'hidden',
+    ...shadows.card,
+  },
+  dialogHeader: {
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 12,
+  },
+  dialogTitle: {
+    color: colors.text,
+    fontSize: font.sizeLg,
+    fontWeight: font.weightSemibold,
+  },
+  dialogSubtitle: {
+    color: colors.textSubtle,
+    fontSize: font.sizeSm,
+    marginTop: 4,
+  },
+  dialogBody: {
+    paddingHorizontal: 20,
+    paddingBottom: 12,
+  },
+  dialogInput: {
+    minHeight: 50,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
+    backgroundColor: colors.bgCard,
+    color: colors.text,
+    paddingHorizontal: 14,
+    fontSize: font.sizeMd,
+  },
+  errorText: {
+    color: colors.danger,
+    fontSize: font.sizeXs,
+    marginTop: 8,
+  },
+  dialogFooter: {
+    flexDirection: 'row',
+    gap: 10,
+    paddingHorizontal: 20,
+    paddingBottom: 20,
+  },
+  cancelButton: {
+    flex: 1,
+    minHeight: 46,
+    borderRadius: radius.lg,
+    backgroundColor: colors.bgCard,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cancelButtonText: {
+    color: colors.textMuted,
+    fontSize: font.sizeSm,
+    fontWeight: font.weightMedium,
+  },
+  createButtonWrap: {
+    flex: 1,
   },
 });
