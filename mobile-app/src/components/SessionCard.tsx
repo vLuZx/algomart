@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Package, Trash2 } from 'lucide-react-native';
 import { formatDistanceToNow } from 'date-fns';
-import { colors, font, radius, shadows } from '../constants/theme';
+import { colors, font, radius } from '../constants/theme';
 
 interface SessionCardProps {
   readonly id: string;
@@ -25,7 +25,10 @@ export function SessionCard({
 
   return (
     <Pressable
-      style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
+      style={({ pressed }) => [
+        styles.card,
+        pressed && styles.cardPressed,
+      ]}
       onPress={() => onPress(id)}
     >
       <View style={styles.row}>
@@ -35,7 +38,7 @@ export function SessionCard({
             {title}
           </Text>
           <View style={styles.meta}>
-            <Package size={14} color="#f59e0b" strokeWidth={2} />
+            <Package size={16} color="#f59e0b" strokeWidth={2} />
             <Text style={styles.count}>{productCount}</Text>
             <Text style={styles.metaText}>
               {productCount === 1 ? 'product' : 'products'}
@@ -67,12 +70,21 @@ const styles = StyleSheet.create({
     borderRadius: radius.lg,
     borderWidth: 1,
     borderColor: colors.border,
-    padding: 20,
-    ...shadows.card,
+    padding: 16,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    elevation: 6,
   },
   cardPressed: {
-    opacity: 0.85,
     transform: [{ scale: 0.98 }],
+    shadowColor: '#d97706',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 10,
+    elevation: 8,
+    borderColor: 'rgba(217, 119, 6, 0.40)',
   },
   row: {
     flexDirection: 'row',
@@ -107,15 +119,22 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   deleteBtn: {
-    width: 40,
-    height: 40,
+    width: 36,
+    height: 36,
     borderRadius: radius.sm,
     backgroundColor: colors.dangerSoft,
     alignItems: 'center',
     justifyContent: 'center',
-    ...shadows.soft,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    elevation: 4,
   },
   deleteBtnPressed: {
     backgroundColor: 'rgba(248, 113, 113, 0.18)',
+    shadowColor: '#ef4444',
+    shadowOpacity: 0.4,
+    shadowRadius: 12,
   },
 });

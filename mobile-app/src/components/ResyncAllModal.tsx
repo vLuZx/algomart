@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
+  Animated,
+  Easing,
   Modal,
   Pressable,
   StyleSheet,
@@ -27,11 +28,84 @@ function estimateLabel(total: number) {
   return `~${approxSeconds}s for ${total} product${total === 1 ? '' : 's'}`;
 }
 
+function SyncIcon({ state, spinRotate }: Readonly<{ state: SyncState; spinRotate: Animated.AnimatedInterpolation<string> }>) {
+  if (state === 'done') {
+    return <Check size={24} color={colors.accent} strokeWidth={2.5} />;
+  }
+  if (state === 'cancelled') {
+    return <X size={24} color={colors.textSubtle} strokeWidth={2.5} />;
+  }
+  return (
+    <Animated.View style={{ transform: [{ rotate: spinRotate }] }}>
+      <RefreshCw size={24} color={colors.info} strokeWidth={2.2} />
+    </Animated.View>
+  );
+}
+
+function syncTitle(state: SyncState) {
+  if (state === 'cancelled') return 'Sync Cancelled';
+  if (state === 'done') return 'All Products Synced!';
+  return 'Syncing with Amazon';
+}
+
 export function ResyncAllModal({ visible, productNames, onClose }: ResyncAllModalProps) {
   const [progress, setProgress] = useState(0);
   const [state, setState] = useState<SyncState>('running');
 
   const total = productNames.length;
+
+  // Spinning animation for RefreshCw icon
+  const spinAnim = useRef(new Animated.Value(0)).current;
+  // Bouncing dots
+  const dot1 = useRef(new Animated.Value(0)).current;
+  const dot2 = useRef(new Animated.Value(0)).current;
+  const dot3 = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (!visible || state !== 'running') return;
+
+    const spin = Animated.loop(
+      Animated.timing(spinAnim, {
+        toValue: 1,
+        duration: 1000,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      }),
+    );
+    spin.start();
+
+    const bounce = (anim: Animated.Value, delay: number) =>
+      Animated.loop(
+        Animated.sequence([
+          Animated.delay(delay),
+          Animated.timing(anim, { toValue: -6, duration: 250, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+          Animated.timing(anim, { toValue: 0, duration: 250, easing: Easing.in(Easing.quad), useNativeDriver: true }),
+        ]),
+      );
+
+    const b1 = bounce(dot1, 0);
+    const b2 = bounce(dot2, 150);
+    const b3 = bounce(dot3, 300);
+    b1.start();
+    b2.start();
+    b3.start();
+
+    return () => {
+      spin.stop();
+      b1.stop();
+      b2.stop();
+      b3.stop();
+      spinAnim.setValue(0);
+      dot1.setValue(0);
+      dot2.setValue(0);
+      dot3.setValue(0);
+    };
+  }, [visible, state, spinAnim, dot1, dot2, dot3]);
+
+  const spinRotate = spinAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '360deg'],
+  });
 
   useEffect(() => {
     if (!visible) {
@@ -92,23 +166,11 @@ export function ResyncAllModal({ visible, productNames, onClose }: ResyncAllModa
       <View style={styles.backdrop}>
         <View style={styles.dialog}>
           <View style={[styles.iconWrap, state === 'done' && styles.iconWrapDone]}>
-            {state === 'done' ? (
-              <Check size={24} color={colors.accent} strokeWidth={2.5} />
-            ) : state === 'cancelled' ? (
-              <X size={24} color={colors.textSubtle} strokeWidth={2.5} />
-            ) : (
-              <RefreshCw size={24} color={colors.textMuted} strokeWidth={2.2} />
-            )}
+            <SyncIcon state={state} spinRotate={spinRotate} />
           </View>
 
-          {state === 'running' ? <ActivityIndicator color={colors.textMuted} /> : null}
-
           <Text style={[styles.title, state === 'done' && styles.titleDone]}>
-            {state === 'cancelled'
-              ? 'Sync Cancelled'
-              : state === 'done'
-                ? 'All Products Synced!'
-                : 'Syncing with Amazon'}
+            {syncTitle(state)}
           </Text>
           <Text style={styles.subtitle}>{currentLabel}</Text>
 
@@ -126,6 +188,15 @@ export function ResyncAllModal({ visible, productNames, onClose }: ResyncAllModa
                 </Text>
                 <Text style={styles.progressCounter}>{progressLabel}</Text>
               </View>
+            </View>
+          ) : null}
+
+          {/* Bouncing dots */}
+          {state === 'running' ? (
+            <View style={styles.dotsRow}>
+              <Animated.View style={[styles.dot, { transform: [{ translateY: dot1 }] }]} />
+              <Animated.View style={[styles.dot, { transform: [{ translateY: dot2 }] }]} />
+              <Animated.View style={[styles.dot, { transform: [{ translateY: dot3 }] }]} />
             </View>
           ) : null}
 
@@ -167,10 +238,10 @@ const styles = StyleSheet.create({
     borderRadius: radius.full,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(63, 63, 70, 0.25)',
+    backgroundColor: 'rgba(96, 165, 250, 0.10)',
   },
   iconWrapDone: {
-    backgroundColor: 'rgba(113, 113, 122, 0.35)',
+    backgroundColor: 'rgba(52, 211, 153, 0.15)',
   },
   title: {
     color: colors.text,
@@ -228,5 +299,16 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     fontSize: font.sizeXs,
     fontWeight: font.weightMedium,
+  },
+  dotsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  dot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.info,
   },
 });

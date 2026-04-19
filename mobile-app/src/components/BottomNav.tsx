@@ -1,6 +1,6 @@
 import type { ComponentType } from 'react';
-import { useMemo } from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { useRef } from 'react';
+import { Animated, Pressable, StyleSheet, View } from 'react-native';
 import { usePathname, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -10,7 +10,7 @@ import {
   User,
   Zap,
 } from 'lucide-react-native';
-import { colors, radius, shadows } from '../constants/theme';
+import { colors, radius } from '../constants/theme';
 
 type NavIcon = ComponentType<{
   size?: number;
@@ -64,7 +64,30 @@ export function BottomNav() {
   const insets = useSafeAreaInsets();
 
   const activePath = pathname ?? '/';
-  const bottomPadding = useMemo(() => Math.max(insets.bottom, 8), [insets.bottom]);
+  const bottomPadding = Math.max(insets.bottom, 8);
+
+  // Per-tab animated scale values for spring press effect
+  const scaleRefs = useRef(
+    Object.fromEntries(navItems.map((item) => [item.label, new Animated.Value(1)])),
+  ).current;
+
+  const handlePressIn = (label: string) => {
+    Animated.spring(scaleRefs[label], {
+      toValue: 0.82,
+      useNativeDriver: true,
+      speed: 50,
+      bounciness: 4,
+    }).start();
+  };
+
+  const handlePressOut = (label: string) => {
+    Animated.spring(scaleRefs[label], {
+      toValue: 1,
+      useNativeDriver: true,
+      speed: 12,
+      bounciness: 10,
+    }).start();
+  };
 
   return (
     <View style={[styles.outerWrap, { paddingBottom: bottomPadding }]}> 
@@ -80,16 +103,24 @@ export function BottomNav() {
               accessibilityRole="tab"
               accessibilityLabel={item.label}
               accessibilityState={{ selected: active }}
-              style={({ pressed }) => [styles.navItem, pressed && styles.navItemPressed]}
+              style={styles.navItem}
+              onPressIn={() => handlePressIn(item.label)}
+              onPressOut={() => handlePressOut(item.label)}
               onPress={() => router.replace(item.href)}
             >
-              <View style={[styles.iconWrap, active && styles.iconWrapActive]}>
+              <Animated.View
+                style={[
+                  styles.iconWrap,
+                  active && styles.iconWrapActive,
+                  { transform: [{ scale: scaleRefs[item.label] }] },
+                ]}
+              >
                 <Icon
                   size={24}
                   color={active ? colors.accent : colors.textSubtle}
                   strokeWidth={active ? 2.4 : 2}
                 />
-              </View>
+              </Animated.View>
               <View style={styles.indicatorSlot}>
                 {active ? <View style={styles.indicator} /> : null}
               </View>
@@ -107,7 +138,11 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bgStrong,
     borderTopWidth: 1,
     borderTopColor: 'rgba(255, 255, 255, 0.05)',
-    ...shadows.soft,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: -8 },
+    shadowOpacity: 0.35,
+    shadowRadius: 30,
+    elevation: 12,
   },
   backdrop: {
     ...StyleSheet.absoluteFillObject,
@@ -122,9 +157,6 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  navItemPressed: {
-    opacity: 0.88,
   },
   iconWrap: {
     width: 44,
