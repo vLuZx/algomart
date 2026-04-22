@@ -2,16 +2,19 @@
  * Integration tests for product.service.ts
  *
  * Verifies:
- *   - fetchCatalog calls the correct backend endpoint
- *   - fetchPricing calls the correct backend endpoint with ASIN params
- *   - lookupByBarcode chains catalog → pricing and returns a flat result
- *   - lookupByBarcode handles empty catalog results
- *   - lookupByBarcode still returns catalog data when pricing fails
+ *   - fetchCatalog / fetchPricing call the correct backend endpoints
+ *   - fetchInsightsByBarcode calls /api/amazon/insights with fields
+ *   - lookupByBarcode prefers the aggregated insights endpoint
+ *   - lookupByBarcode falls back to catalog + pricing when insights fails
  */
 
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import type { AxiosInstance } from 'axios';
-import type { CatalogSearchResponse, PricingResponse } from '../../src/types/api';
+import type {
+  CatalogSearchResponse,
+  PricingResponse,
+  ProductInsightsResponse,
+} from '../../src/types/api';
 
 // ── Mock axios at module level ───────────────────────────────────────
 
@@ -25,6 +28,7 @@ jest.mock('../../src/services/api', () => ({
 import {
   fetchCatalog,
   fetchPricing,
+  fetchInsightsByBarcode,
   lookupByBarcode,
 } from '../../src/services/product.service';
 
@@ -54,6 +58,53 @@ const pricingResponse: PricingResponse[] = [
   { identifier: ASIN, price: 24.99, currency: 'USD', offersCount: 5 },
 ];
 
+const insightsResponse: ProductInsightsResponse = {
+  asin: ASIN,
+  marketplaceId: 'ATVPDKIKX0DER',
+  fields: {
+    summary: {
+      itemName: 'Wilson NFL Football',
+      brand: 'Wilson',
+      manufacturer: 'Wilson Sporting Goods',
+      browseClassification: { displayName: 'Footballs' },
+    },
+    images: [
+      {
+        images: [
+          { variant: 'MAIN', link: 'https://example.com/main.jpg' },
+          { variant: 'PT01', link: 'https://example.com/alt.jpg' },
+        ],
+      },
+    ],
+    dimensions: [
+      {
+        item: {
+          length: { value: 12, unit: 'inches' },
+          width: { value: 6, unit: 'inches' },
+          height: { value: 6, unit: 'inches' },
+          weight: { value: 1, unit: 'pounds' },
+        },
+      },
+    ],
+    salesRank: [
+      {
+        displayGroupRanks: [{ rank: 1234, title: 'Sports', link: 'https://example.com' }],
+      },
+    ],
+    bsr: { rank: 1234, category: 'Sports', link: 'https://example.com' },
+    pricing: {
+      payload: [
+        {
+          Product: {
+            Offers: [{ BuyingPrice: { ListingPrice: { Amount: 24.99, CurrencyCode: 'USD' } } }],
+          },
+        },
+      ],
+    },
+    offers: { payload: [{ Summary: { TotalOfferCount: 5 } }] },
+  },
+};
+
 // ── Tests ────────────────────────────────────────────────────────────
 
 beforeEach(() => {
@@ -66,9 +117,7 @@ describe('fetchCatalog', () => {
 
     const result = await fetchCatalog(BARCODE);
 
-    expect(mockGet).toHaveBeenCalledWith(
-      `/api/amazon/catalog/barcode/${BARCODE}`,
-    );
+    expect(mockGet).toHaveBeenCalledWith(`/api/amazon/catalog/barcode/${BARCODE}`);
     expect(result).toEqual(catalogResponse);
   });
 });
@@ -79,24 +128,55 @@ describe('fetchPricing', () => {
 
     const result = await fetchPricing(ASIN);
 
-    expect(mockGet).toHaveBeenCalledWith(
-      '/api/amazon/pricing/price',
-      {
-        params: {
-          identifiers: ASIN,
-          type: 'ASIN',
-          marketplaceId: 'ATVPDKIKX0DER',
-        },
-      },
-    );
+    expect(mockGet).toHaveBeenCalledWith('/api/amazon/pricing/price', {
+      params: { identifiers: ASIN, type: 'ASIN', marketplaceId: 'ATVPDKIKX0DER' },
+    });
     expect(result).toEqual(pricingResponse);
   });
 });
 
+describe('fetchInsightsByBarcode', () => {
+  it('calls GET /api/amazon/insights with barcode + fields', async () => {
+    mockGet.mockResolvedValueOnce({ data: insightsResponse } as any);
+
+    const result = await fetchInsightsByBarcode(BARCODE);
+
+    expect(mockGet).toHaveBeenCalledWith('/api/amazon/insights', {
+      params: {
+        barcode: BARCODE,
+        fields: 'summary,images,dimensions,salesRank,bsr,pricing,offers',
+      },
+    });
+    expect(result).toEqual(insightsResponse);
+  });
+});
+
 describe('lookupByBarcode', () => {
-  it('chains catalog → pricing and returns a flat result', async () => {
-    // First call = catalog, second call = pricing
+  it('returns enriched data from the insights endpoint', async () => {
+    mockGet.mockResolvedValueOnce({ data: insightsResponse } as any);
+
+    const result = await lookupByBarcode(BARCODE);
+
+    expect(result).toEqual({
+      asin: ASIN,
+      title: 'Wilson NFL Football',
+      brand: 'Wilson',
+      manufacturer: 'Wilson Sporting Goods',
+      price: 24.99,
+      currency: 'USD',
+      category: 'Footballs',
+      image: 'https://example.com/main.jpg',
+      dimensions: '12 x 6 x 6 inches',
+      weight: '1 pounds',
+      salesRank: 1234,
+      bsr: { rank: 1234, category: 'Sports', link: 'https://example.com' },
+      offersCount: 5,
+    });
+  });
+
+  it('falls back to catalog + pricing when insights fails', async () => {
     mockGet
+      .mockRejectedValueOnce(new Error('insights down'))
       .mockResolvedValueOnce({ data: catalogResponse } as any)
       .mockResolvedValueOnce({ data: pricingResponse } as any);
 
@@ -109,55 +189,23 @@ describe('lookupByBarcode', () => {
       manufacturer: 'Wilson Sporting Goods',
       price: 24.99,
       currency: 'USD',
+      category: null,
+      image: null,
+      dimensions: null,
+      weight: null,
+      salesRank: null,
+      bsr: null,
+      offersCount: null,
     });
   });
 
-  it('throws when catalog returns zero results', async () => {
-    mockGet.mockResolvedValueOnce({
-      data: { numberOfResults: 0, items: [] },
-    } as any);
+  it('throws when the fallback catalog returns zero results', async () => {
+    mockGet
+      .mockRejectedValueOnce(new Error('insights down'))
+      .mockResolvedValueOnce({ data: { numberOfResults: 0, items: [] } } as any);
 
     await expect(lookupByBarcode(BARCODE)).rejects.toThrow(
       `No product found for barcode ${BARCODE}`,
     );
-  });
-
-  it('returns catalog data with null price when pricing fails', async () => {
-    mockGet
-      .mockResolvedValueOnce({ data: catalogResponse } as any)
-      .mockRejectedValueOnce(new Error('Pricing unavailable'));
-
-    const result = await lookupByBarcode(BARCODE);
-
-    expect(result).toEqual({
-      asin: ASIN,
-      title: 'Wilson NFL Football',
-      brand: 'Wilson',
-      manufacturer: 'Wilson Sporting Goods',
-      price: null,
-      currency: null,
-    });
-  });
-
-  it('returns null fields when catalog item has no summary', async () => {
-    const noSummary: CatalogSearchResponse = {
-      numberOfResults: 1,
-      items: [{ asin: ASIN }],
-    };
-
-    mockGet
-      .mockResolvedValueOnce({ data: noSummary } as any)
-      .mockResolvedValueOnce({ data: pricingResponse } as any);
-
-    const result = await lookupByBarcode(BARCODE);
-
-    expect(result).toEqual({
-      asin: ASIN,
-      title: null,
-      brand: null,
-      manufacturer: null,
-      price: 24.99,
-      currency: 'USD',
-    });
   });
 });

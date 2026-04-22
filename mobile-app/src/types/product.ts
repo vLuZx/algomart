@@ -41,4 +41,20 @@ export interface ScannerSeedProduct {
 
 export interface ScannedProductInput extends ScannerSeedProduct {
   foundPrice: number;
+  // Optional enrichment sourced from the aggregated insights endpoint.
+  barcode?: string;
+  barcodeType?: string;
+  reviewCount?: number;
+  sellerPopularityScore?: number;
+  estimatedShipping?: number;
+  amazonFees?: number;
+  profitMargin?: number;
+  requiresApproval?: boolean;
+  competitionLevel?: CompetitionLevel;
+  salesRank?: number;
+  bsr?: number;
+  dimensions?: string;
+  weight?: string;
+  restrictions?: string[];
+  monthlySalesEstimate?: number;
 }

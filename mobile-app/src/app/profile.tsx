@@ -48,7 +48,10 @@ const accountItems: readonly AccountItem[] = [
 export default function ProfilePage() {
   const { sessions, getProducts } = useSessions();
   const [editingName, setEditingName] = useState(false);
-  const [name, setName] = useState('Alex Carter');
+  // TODO(backend): Load the authenticated user's name/email/plan from the
+  // backend (`GET /api/me` or similar). Hard-coded "Alex Carter" /
+  // "alex@example.com" mock values have been removed.
+  const [name, setName] = useState('');
 
   const allProducts = useMemo(
     () => sessions.flatMap((session) => getProducts(session.id)),
@@ -62,24 +65,9 @@ export default function ProfilePage() {
       : 0;
 
   const badges: readonly Badge[] = [
-    {
-      label: 'Power Scanner',
-      description: '500+ products scanned',
-      color: colors.accent,
-      backgroundColor: colors.accentSoft,
-    },
-    {
-      label: 'Profit Hunter',
-      description: '>30% avg margin',
-      color: colors.success,
-      backgroundColor: colors.successSoft,
-    },
-    {
-      label: 'Session Streak',
-      description: '7-day active streak',
-      color: colors.info,
-      backgroundColor: colors.infoSoft,
-    },
+    // TODO(backend): Fetch earned badges from the backend. The previously
+    // hard-coded "Power Scanner", "Profit Hunter", and "Session Streak"
+    // badges were mock fixtures and have been removed.
   ];
 
   const initials = name
@@ -103,7 +91,7 @@ export default function ProfilePage() {
         <View style={styles.profileCard}>
           <View style={styles.avatarWrap}>
             <LinearGradient colors={gradients.amber} style={styles.avatarGradient}>
-              <Text style={styles.avatarText}>{initials || 'AC'}</Text>
+              <Text style={styles.avatarText}>{initials}</Text>
             </LinearGradient>
             <View style={styles.statusDot} />
           </View>
@@ -128,15 +116,14 @@ export default function ProfilePage() {
               </View>
             )}
 
-            <Text style={styles.profileEmail}>alex@example.com</Text>
+            <Text style={styles.profileEmail}>
+              {/* TODO(backend): display the authenticated user's email */}
+            </Text>
 
             <View style={styles.planRow}>
-              <View style={styles.planBadgeAmber}>
-                <Text style={styles.planBadgeAmberText}>Pro Plan</Text>
-              </View>
-              <View style={styles.planBadgeGreen}>
-                <Text style={styles.planBadgeGreenText}>Active</Text>
-              </View>
+              {/* TODO(backend): render the user's real plan + status from
+                  the subscription/billing service. The previous "Pro Plan"
+                  and "Active" labels were hard-coded mock values. */}
             </View>
           </View>
         </View>

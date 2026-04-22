@@ -38,42 +38,10 @@ interface Automation {
 }
 
 const initialAutomations: readonly Automation[] = [
-  {
-    id: '1',
-    name: 'Price Drop Alert',
-    description: 'Notify when Amazon price drops below found price threshold',
-    trigger: 'Price change detected',
-    lastRun: '2 hours ago',
-    icon: Bell,
-    enabled: true,
-  },
-  {
-    id: '2',
-    name: 'Auto-Tag Profitable',
-    description: 'Automatically tag products with margin above 30%',
-    trigger: 'New product scanned',
-    lastRun: '10 min ago',
-    icon: Tag,
-    enabled: true,
-  },
-  {
-    id: '3',
-    name: 'Daily Price Sync',
-    description: 'Resync all product prices from Amazon every morning',
-    trigger: 'Daily at 7:00 AM',
-    lastRun: 'Yesterday',
-    icon: RefreshCw,
-    enabled: false,
-  },
-  {
-    id: '4',
-    name: 'BSR Filter',
-    description: 'Hide products with BSR rank above 500,000',
-    trigger: 'Session opened',
-    lastRun: '3 days ago',
-    icon: Filter,
-    enabled: false,
-  },
+  // TODO(backend): Replace with automations fetched from the user's account
+  // (e.g. `GET /api/automations`). The previously hard-coded "Price Drop
+  // Alert", "Auto-Tag Profitable", "Daily Price Sync", and "BSR Filter"
+  // entries were mock fixtures and have been removed.
 ];
 
 export default function AutomationsPage() {

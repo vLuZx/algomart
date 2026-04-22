@@ -26,7 +26,7 @@ import {
 import { ChevronLeft, DollarSign, ScanLine, X } from 'lucide-react-native';
 import { GradientButton } from '../../../components/GradientButton';
 import { colors, font, radius, shadows } from '../../../constants/theme';
-import { lookupByBarcode } from '../../../services/product.service';
+import { lookupByBarcode, fetchFeesEstimate } from '../../../services/product.service';
 import { useSessions } from '../../../store/sessions';
 import type { ProductLookupResult } from '../../../types/api';
 import type { ScannedProductInput } from '../../../types/product';
@@ -47,16 +47,31 @@ function getRouteParam(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value;
 }
 
-function buildScannedInput(lookup: ProductLookupResult, foundPrice: number): ScannedProductInput {
+function buildScannedInput(
+  lookup: ProductLookupResult,
+  foundPrice: number,
+  scan: { barcode: string; barcodeType: string },
+  amazonFees?: number | null,
+): ScannedProductInput {
+  // Enrichment fields come from `/api/amazon/insights` via lookupByBarcode.
+  // Fields SP-API does not expose (rating, sellerPopularity, competitionLevel,
+  // etc.) stay at neutral defaults until new APIs back them.
   return {
     asin: lookup.asin,
     title: lookup.title ?? lookup.brand ?? 'Unknown Product',
-    image: '',
+    image: lookup.image ?? '',
     rating: 0,
-    category: 'Electronics',
+    category: lookup.category ?? '',
     price: lookup.price ?? foundPrice,
     sellerPopularity: 'Medium',
     foundPrice,
+    barcode: scan.barcode,
+    barcodeType: scan.barcodeType,
+    ...(lookup.dimensions ? { dimensions: lookup.dimensions } : {}),
+    ...(lookup.weight ? { weight: lookup.weight } : {}),
+    ...(lookup.salesRank !== null ? { salesRank: lookup.salesRank } : {}),
+    ...(lookup.bsr ? { bsr: lookup.bsr.rank } : {}),
+    ...(typeof amazonFees === 'number' ? { amazonFees } : {}),
   };
 }
 
@@ -70,7 +85,9 @@ export default function ScanScreen() {
   const device = useCameraDevice('back');
 
   const [isLookingUp, setIsLookingUp] = useState(false);
+  const [isConfirming, setIsConfirming] = useState(false);
   const [lookupResult, setLookupResult] = useState<ProductLookupResult | null>(null);
+  const [scannedCode, setScannedCode] = useState<{ barcode: string; barcodeType: string } | null>(null);
   const [foundPriceText, setFoundPriceText] = useState('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -88,12 +105,14 @@ export default function ScanScreen() {
     lastBarcodeRef.current = null;
     inFlightRef.current = false;
     setLookupResult(null);
+    setScannedCode(null);
     setFoundPriceText('');
     setErrorMessage(null);
     setIsLookingUp(false);
+    setIsConfirming(false);
   }, []);
 
-  const handleBarcode = useCallback(async (raw: string) => {
+  const handleBarcode = useCallback(async (raw: string, barcodeType: ScannedObjectType) => {
     const barcode = raw.trim();
     if (!barcode || inFlightRef.current) return;
     if (lastBarcodeRef.current === barcode) return;
@@ -105,6 +124,7 @@ export default function ScanScreen() {
 
     try {
       const result = await lookupByBarcode(barcode);
+      setScannedCode({ barcode, barcodeType });
       setLookupResult(result);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Product lookup failed.';
@@ -122,7 +142,7 @@ export default function ScanScreen() {
       if (inFlightRef.current || lookupResult) return;
       for (const object of objects) {
         if (isScannedCode(object) && object.value) {
-          void handleBarcode(object.value);
+          void handleBarcode(object.value, object.type);
           return;
         }
       }
@@ -142,19 +162,46 @@ export default function ScanScreen() {
     return Number.isFinite(value) && value > 0 ? value : null;
   }, [foundPriceText]);
 
-  const handleConfirm = useCallback(() => {
-    if (!sessionId || !lookupResult || parsedFoundPrice === null) return;
+  const handleConfirm = useCallback(async () => {
+    if (!sessionId || !lookupResult || parsedFoundPrice === null || !scannedCode) return;
+    if (isConfirming) return;
+
+    setIsConfirming(true);
+
+    // Only call the Fees API if Amazon returned a listing price. Without a
+    // sell price we have nothing to estimate fees against.
+    let amazonFees: number | null = null;
+    if (typeof lookupResult.price === 'number' && lookupResult.price > 0) {
+      try {
+        const fees = await fetchFeesEstimate(lookupResult.asin, lookupResult.price, {
+          ...(lookupResult.currency ? { currency: lookupResult.currency } : {}),
+        });
+        amazonFees = fees.totalFees;
+      } catch (error) {
+        console.warn('[Scan] Fees estimate failed; continuing without fees', error);
+      }
+    }
 
     try {
-      const input = buildScannedInput(lookupResult, parsedFoundPrice);
+      const input = buildScannedInput(lookupResult, parsedFoundPrice, scannedCode, amazonFees);
       const product = addScannedProduct(sessionId, input);
       resetScan();
       router.replace(`/session/${sessionId}/product/${product.id}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Could not add product.';
       Alert.alert('Unable to add product', message);
+      setIsConfirming(false);
     }
-  }, [sessionId, lookupResult, parsedFoundPrice, addScannedProduct, resetScan, router]);
+  }, [
+    sessionId,
+    lookupResult,
+    parsedFoundPrice,
+    scannedCode,
+    isConfirming,
+    addScannedProduct,
+    resetScan,
+    router,
+  ]);
 
   const showSheet = lookupResult !== null;
   const cameraActive = !showSheet;
@@ -307,9 +354,9 @@ export default function ScanScreen() {
               </View>
 
               <GradientButton
-                label="Confirm"
+                label={isConfirming ? 'Calculating fees…' : 'Confirm'}
                 onPress={handleConfirm}
-                disabled={parsedFoundPrice === null}
+                disabled={parsedFoundPrice === null || isConfirming}
                 style={styles.confirmButton}
               />
             </SafeAreaView>

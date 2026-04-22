@@ -36,6 +36,50 @@ export interface PricingResponse {
   offersCount?: number;
 }
 
+// --- GET /api/amazon/insights ---
+
+export type ProductInsightField =
+  | 'summary'
+  | 'identifiers'
+  | 'images'
+  | 'dimensions'
+  | 'salesRank'
+  | 'bsr'
+  | 'pricing'
+  | 'competitivePricing'
+  | 'offers';
+
+export interface ProductInsightsBsr {
+  rank: number;
+  category: string;
+  link?: string;
+}
+
+export interface ProductInsightsResponse {
+  asin: string;
+  marketplaceId: string;
+  fields: Partial<Record<ProductInsightField, unknown>>;
+  errors?: Partial<Record<ProductInsightField, string>>;
+}
+
+// --- POST /api/amazon/fees/estimate ---
+
+export interface FeesEstimateBreakdownItem {
+  type: string;
+  amount: number;
+}
+
+export interface FeesEstimate {
+  asin: string;
+  marketplaceId: string;
+  currency: string;
+  listingPrice: number;
+  totalFees: number | null;
+  feeBreakdown: FeesEstimateBreakdownItem[];
+  status: string | null;
+  error?: string;
+}
+
 // --- Combined result returned by the frontend service ---
 
 export interface ProductLookupResult {
@@ -45,4 +89,12 @@ export interface ProductLookupResult {
   manufacturer: string | null;
   price: number | null;
   currency: string | null;
+  // Enrichment (best-effort; may be null when Amazon does not return data)
+  category: string | null;
+  image: string | null;
+  dimensions: string | null;
+  weight: string | null;
+  salesRank: number | null;
+  bsr: ProductInsightsBsr | null;
+  offersCount: number | null;
 }
