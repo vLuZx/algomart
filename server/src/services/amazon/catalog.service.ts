@@ -1,7 +1,7 @@
 import amazonClient from './client.service.js';
 import type {
 	BarcodeType,
-	CatalogSearchResponse,
+	AmazonCatalogResponse,
 } from '../../types/amazon.types.js';
 import { inferBarcodeType,  isValidBarcode } from '../../utils/barcode.utils.js';
 
@@ -23,7 +23,7 @@ class AmazonCatalogService {
 	/**
 	 * Search catalog items by barcode
 	 */
-	async searchCatalogItemsByBarcode(barcode: string): Promise<CatalogSearchResponse> {
+	async searchCatalogItemsByBarcode(barcode: string): Promise<any> {
 
 		// Trim the barcode
 		const cleanBarcode = barcode.trim();
@@ -39,7 +39,7 @@ class AmazonCatalogService {
 
 		// Attempt to make a request to the SP-API for the item with the barcode
 		try {
-			return await amazonClient.get<CatalogSearchResponse>(`/catalog/${this.API_VERSION}/items`, {
+			return await amazonClient.get<any>(`/catalog/${this.API_VERSION}/items`, {
 				identifiers: cleanBarcode,
 				identifiersType: resolvedIdentifierType,
 				marketplaceIds: marketplaceId,
@@ -55,14 +55,41 @@ class AmazonCatalogService {
 		}
 	}
 
-	public getASIN(catalogSearchResponse: CatalogSearchResponse): string  {
-		if (catalogSearchResponse.numberOfResults > 1) {
-			throw this.createHttpError("Message: too many items mapped to same identifier.", 500, 'TooManyResultsInCatalogSearchResponse');
+	/**
+	 * Search catalog items by ASIN
+	 */
+	async searchCatalogItemsByAsin(asin: string): Promise<any> {
+		const cleanAsin = asin.trim();
+		if (!cleanAsin) {
+			throw this.createHttpError('ASIN is required', 400, 'InvalidAsinError');
 		}
-		if (catalogSearchResponse.numberOfResults === 0 || !catalogSearchResponse.items[0]) {
-			throw this.createHttpError("Message: no product found.", 500, 'NoResultInCatalogSearchResponse');
+
+		const marketplaceId = amazonClient.getMarketplaceId();
+
+		try {
+			return await amazonClient.get<any>(`/catalog/${this.API_VERSION}/items`, {
+				identifiers: cleanAsin,
+				identifiersType: 'ASIN',
+				marketplaceIds: marketplaceId,
+				includedData: this.SEARCH_INCLUDED_DATA,
+			});
+		} catch (error) {
+			throw this.createHttpError(
+				`Error: ${error}, Message: Failed to search catalog for ASIN ${cleanAsin}`,
+				500,
+				'AmazonCatalogSearchError'
+			);
 		}
-		return catalogSearchResponse.items[0].asin;
+	}
+
+	public getASIN(catalogSearchResponse: AmazonCatalogResponse): string  {
+		if (!catalogSearchResponse.items || catalogSearchResponse.items.length === 0) {
+			throw this.createHttpError('No items found in catalog search response', 404, 'CatalogItemNotFoundError');
+		}
+		if (catalogSearchResponse.items[0]?.asin === undefined) {
+			throw this.createHttpError('ASIN not found in catalog search response', 404, 'AsinNotFoundError');
+		}
+		return catalogSearchResponse.items[0]?.asin;
 	}
 
 }

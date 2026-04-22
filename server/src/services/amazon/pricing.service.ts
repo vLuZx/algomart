@@ -1,165 +1,212 @@
 import amazonClient from './client.service.js';
 import type {
-  GetPricingParams,
-  GetCompetitivePricingParams,
-  GetOffersParams,
-  GetCompetitiveSummaryBatchParams,
-  PricingResponse,
-  OffersResponse,
-  CompetitiveSummaryBatchResponse
+	GetPricingParams,
+	GetCompetitivePricingParams,
+	GetOffersParams,
+	GetCompetitiveSummaryBatchParams,
+	CompetitiveSummaryBatchResponse,
 } from '../../types/amazon/pricing.types.js';
 
+/**
+ * Amazon Product Pricing API Service
+ * Handles price, competitive pricing, and offers lookups.
+ */
 class AmazonPricingService {
-  private readonly API_VERSION = 'v0';
-  private readonly BATCH_VERSION = '2022-05-01';
+	private readonly API_VERSION_V0 = 'v0';
+	private readonly API_VERSION_2022 = '2022-05-01';
 
-  private createHttpError(message: string, statusCode: number, name = 'AmazonPricingError'): Error {
-    const error = new Error(message) as Error & { statusCode?: number };
-    error.name = name;
-    error.statusCode = statusCode;
-    return error;
-  }
+	private createHttpError(message: string, statusCode: number, name = 'AmazonPricingError'): Error {
+		const error = new Error(message) as Error & { statusCode?: number };
+		error.name = name;
+		error.statusCode = statusCode;
+		return error;
+	}
 
-  async getPricing(params: GetPricingParams): Promise<PricingResponse[]> {
-    const { identifiers, type, marketplaceId, itemCondition, customerType } = params;
-    // Validate required parameters
-    if (!identifiers?.length || !['ASIN', 'SKU'].includes(type) || !marketplaceId) {
-      throw this.createHttpError('Missing or invalid required parameters', 400);
-    }
-    // Build query for Amazon API
-    const query: any = {
-      MarketplaceId: marketplaceId,
-      [type === 'ASIN' ? 'Asins' : 'Skus']: identifiers.join(','), // Use correct key for identifier type
-    };
-    if (itemCondition) query.ItemCondition = itemCondition;
-    if (customerType) query.CustomerType = customerType;
-    try {
-      // Call Amazon Pricing API
-      const res = await amazonClient.get<any>(`/products/pricing/v0/price`, query);
-      // Normalize response: flatten to array of pricing info
-      return (res?.payload || []).map((item: any) => ({
-        identifier: item[type === 'ASIN' ? 'ASIN' : 'SellerSKU'],
-        price: item?.Offers?.[0]?.ListingPrice?.Amount ?? null,
-        currency: item?.Offers?.[0]?.ListingPrice?.CurrencyCode ?? '',
-        condition: item?.Offers?.[0]?.ItemCondition,
-        offersCount: item?.Offers?.length ?? 0,
-      }));
-    } catch (err) {
-      throw this.createHttpError('Amazon getPricing error: ' + (err as Error).message, 500);
-    }
-  }
+	private resolveMarketplaceId(marketplaceId?: string): string {
+		return marketplaceId && marketplaceId.trim().length > 0
+			? marketplaceId
+			: amazonClient.getMarketplaceId();
+	}
 
-  async getCompetitivePricing(params: GetCompetitivePricingParams): Promise<PricingResponse[]> {
-    const { identifiers, type, marketplaceId } = params;
-    // Validate required parameters
-    if (!identifiers?.length || !['ASIN', 'SKU'].includes(type) || !marketplaceId) {
-      throw this.createHttpError('Missing or invalid required parameters', 400);
-    }
-    // Build query for Amazon API
-    const query: any = {
-      MarketplaceId: marketplaceId,
-      [type === 'ASIN' ? 'Asins' : 'Skus']: identifiers.join(','),
-    };
-    try {
-      // Call Amazon Competitive Pricing API
-      const res = await amazonClient.get<any>(`/products/pricing/v0/competitivePrice`, query);
-      // Normalize response: flatten to array of competitive pricing info
-      return (res?.payload || []).map((item: any) => ({
-        identifier: item[type === 'ASIN' ? 'ASIN' : 'SellerSKU'],
-        price: item?.CompetitivePricing?.CompetitivePrices?.[0]?.Price?.ListingPrice?.Amount ?? null,
-        currency: item?.CompetitivePricing?.CompetitivePrices?.[0]?.Price?.ListingPrice?.CurrencyCode ?? '',
-        condition: item?.CompetitivePricing?.CompetitivePrices?.[0]?.condition,
-        offersCount: item?.CompetitivePricing?.NumberOfOfferListings ?? 0,
-      }));
-    } catch (err) {
-      throw this.createHttpError('Amazon getCompetitivePricing error: ' + (err as Error).message, 500);
-    }
-  }
+	/**
+	 * GET /products/pricing/v0/price
+	 */
+	async getPricing(params: GetPricingParams): Promise<any> {
+		if (!params.identifiers || params.identifiers.length === 0) {
+			throw this.createHttpError('At least one identifier is required', 400, 'InvalidPricingRequestError');
+		}
 
-  async getListingOffers(sellerSKU: string, params: GetOffersParams): Promise<OffersResponse> {
-    // Validate required parameters
-    if (!sellerSKU || !params?.marketplaceId) {
-      throw this.createHttpError('Missing required parameters', 400);
-    }
-    // Build query for Amazon API
-    const query: any = { MarketplaceId: params.marketplaceId };
-    if (params.itemCondition) query.ItemCondition = params.itemCondition;
-    if (params.customerType) query.CustomerType = params.customerType;
-    try {
-      // Call Amazon Listing Offers API
-      const res = await amazonClient.get<any>(`/products/pricing/v0/listings/${encodeURIComponent(sellerSKU)}/offers`, query);
-      // Normalize offers array from response
-      return {
-        identifier: sellerSKU,
-        offers: (res?.payload?.Offers || []).map((offer: any) => ({
-          price: offer?.ListingPrice?.Amount ?? null,
-          currency: offer?.ListingPrice?.CurrencyCode ?? '',
-          sellerId: offer?.SellerId ?? '',
-          condition: offer?.ItemCondition ?? '',
-          isPrime: !!offer?.IsPrime,
-        })),
-      };
-    } catch (err) {
-      throw this.createHttpError('Amazon getListingOffers error: ' + (err as Error).message, 500);
-    }
-  }
+		const marketplaceId = this.resolveMarketplaceId(params.marketplaceId);
+		const query: Record<string, string | string[] | undefined> = {
+			MarketplaceId: marketplaceId,
+			ItemType: params.type,
+			[params.type === 'ASIN' ? 'Asins' : 'Skus']: params.identifiers,
+		};
 
-  async getItemOffers(asin: string, params: GetOffersParams): Promise<OffersResponse> {
-    // Validate required parameters
-    if (!asin || !params?.marketplaceId) {
-      throw this.createHttpError('Missing required parameters', 400);
-    }
-    // Build query for Amazon API
-    const query: any = { MarketplaceId: params.marketplaceId };
-    if (params.itemCondition) query.ItemCondition = params.itemCondition;
-    if (params.customerType) query.CustomerType = params.customerType;
-    try {
-      // Call Amazon Item Offers API
-      const res = await amazonClient.get<any>(`/products/pricing/v0/items/${encodeURIComponent(asin)}/offers`, query);
-      // Normalize offers array from response
-      return {
-        identifier: asin,
-        offers: (res?.payload?.Offers || []).map((offer: any) => ({
-          price: offer?.ListingPrice?.Amount ?? null,
-          currency: offer?.ListingPrice?.CurrencyCode ?? '',
-          sellerId: offer?.SellerId ?? '',
-          condition: offer?.ItemCondition ?? '',
-          isPrime: !!offer?.IsPrime,
-        })),
-      };
-    } catch (err) {
-      throw this.createHttpError('Amazon getItemOffers error: ' + (err as Error).message, 500);
-    }
-  }
+		if (params.itemCondition) query.ItemCondition = params.itemCondition;
+		if (params.customerType) query.CustomerType = params.customerType;
 
-  async getCompetitiveSummaryBatch(batchParams: GetCompetitiveSummaryBatchParams): Promise<CompetitiveSummaryBatchResponse[]> {
-    // Validate batch size (Amazon allows max 20)
-    if (!batchParams?.requests?.length || batchParams.requests.length > 20) {
-      throw this.createHttpError('Batch must have 1-20 requests', 400);
-    }
-    try {
-      // Call Amazon Competitive Summary Batch API
-      const res = await amazonClient.post<any>(
-        `/batches/products/pricing/2022-05-01/items/competitiveSummary`,
-        { requests: batchParams.requests }
-      );
-      // Each result may have error or summary; normalize to array
-      return (res?.responses || []).map((item: any) => ({
-        asin: item?.asin,
-        marketplaceId: item?.marketplaceId,
-        summary: item?.summary
-          ? {
-              lowestPrice: item.summary.lowestPrice?.amount ?? null,
-              currency: item.summary.lowestPrice?.currency ?? '',
-              offerCount: item.summary.offerCount ?? 0,
-            }
-          : null,
-        error: item?.error,
-      }));
-    } catch (err) {
-      throw this.createHttpError('Amazon getCompetitiveSummaryBatch error: ' + (err as Error).message, 500);
-    }
-  }
+		try {
+			return await amazonClient.get<any>(`/products/pricing/${this.API_VERSION_V0}/price`, query);
+		} catch (error) {
+			throw this.createHttpError(
+				`Error: ${error}, Message: Failed to fetch pricing for ${params.identifiers.join(',')}`,
+				500,
+				'AmazonPricingRequestError'
+			);
+		}
+	}
+
+	/**
+	 * GET /products/pricing/v0/competitivePrice
+	 */
+	async getCompetitivePricing(params: GetCompetitivePricingParams): Promise<any> {
+		if (!params.identifiers || params.identifiers.length === 0) {
+			throw this.createHttpError('At least one identifier is required', 400, 'InvalidPricingRequestError');
+		}
+
+		const marketplaceId = this.resolveMarketplaceId(params.marketplaceId);
+		const query: Record<string, string | string[] | undefined> = {
+			MarketplaceId: marketplaceId,
+			ItemType: params.type,
+			[params.type === 'ASIN' ? 'Asins' : 'Skus']: params.identifiers,
+		};
+
+		try {
+			return await amazonClient.get<any>(
+				`/products/pricing/${this.API_VERSION_V0}/competitivePrice`,
+				query
+			);
+		} catch (error) {
+			throw this.createHttpError(
+				`Error: ${error}, Message: Failed to fetch competitive pricing for ${params.identifiers.join(',')}`,
+				500,
+				'AmazonCompetitivePricingRequestError'
+			);
+		}
+	}
+
+	/**
+	 * GET /products/pricing/v0/listings/{SellerSKU}/offers
+	 */
+	async getListingOffers(sellerSKU: string, params: GetOffersParams): Promise<any> {
+		if (!sellerSKU) {
+			throw this.createHttpError('sellerSKU is required', 400, 'InvalidPricingRequestError');
+		}
+
+		const marketplaceId = this.resolveMarketplaceId(params.marketplaceId);
+		const query: Record<string, string | undefined> = {
+			MarketplaceId: marketplaceId,
+			ItemCondition: params.itemCondition,
+			CustomerType: params.customerType,
+		};
+
+		try {
+			return await amazonClient.get<any>(
+				`/products/pricing/${this.API_VERSION_V0}/listings/${encodeURIComponent(sellerSKU)}/offers`,
+				query
+			);
+		} catch (error) {
+			throw this.createHttpError(
+				`Error: ${error}, Message: Failed to fetch listing offers for SKU ${sellerSKU}`,
+				500,
+				'AmazonListingOffersRequestError'
+			);
+		}
+	}
+
+	/**
+	 * GET /products/pricing/v0/items/{Asin}/offers
+	 */
+	async getItemOffers(asin: string, params: GetOffersParams): Promise<any> {
+		if (!asin) {
+			throw this.createHttpError('asin is required', 400, 'InvalidPricingRequestError');
+		}
+
+		const marketplaceId = this.resolveMarketplaceId(params.marketplaceId);
+		const query: Record<string, string | undefined> = {
+			MarketplaceId: marketplaceId,
+			ItemCondition: params.itemCondition,
+			CustomerType: params.customerType,
+		};
+
+		try {
+			return await amazonClient.get<any>(
+				`/products/pricing/${this.API_VERSION_V0}/items/${encodeURIComponent(asin)}/offers`,
+				query
+			);
+		} catch (error) {
+			throw this.createHttpError(
+				`Error: ${error}, Message: Failed to fetch item offers for ASIN ${asin}`,
+				500,
+				'AmazonItemOffersRequestError'
+			);
+		}
+	}
+
+	/**
+	 * POST /batches/products/pricing/2022-05-01/items/competitiveSummary
+	 */
+	async getCompetitiveSummaryBatch(
+		params: GetCompetitiveSummaryBatchParams
+	): Promise<CompetitiveSummaryBatchResponse[]> {
+		if (!params.requests || params.requests.length === 0) {
+			throw this.createHttpError('At least one request is required', 400, 'InvalidPricingRequestError');
+		}
+
+		const body = {
+			requests: params.requests.map((r) => ({
+				asin: r.asin,
+				marketplaceId: this.resolveMarketplaceId(r.marketplaceId),
+				method: 'GET',
+				uri: '/products/pricing/2022-05-01/items/competitiveSummary',
+				includedData: ['featuredBuyingOptions', 'lowestPricedOffers', 'referencePrices'],
+			})),
+		};
+
+		try {
+			const response = await amazonClient.post<any>(
+				`/batches/products/pricing/${this.API_VERSION_2022}/items/competitiveSummary`,
+				body
+			);
+
+			const responses: any[] = response?.responses ?? [];
+			return responses.map((entry): CompetitiveSummaryBatchResponse => {
+				const asin: string = entry?.request?.asin ?? '';
+				const marketplaceId: string = entry?.request?.marketplaceId ?? '';
+				const errorMessage: string | undefined = entry?.body?.errors?.[0]?.message;
+
+				if (errorMessage) {
+					return { asin, marketplaceId, summary: null, error: errorMessage };
+				}
+
+				const lowest = entry?.body?.lowestPricedOffers?.[0]?.offers?.[0];
+				const lowestPrice: number | undefined = lowest?.listingPrice?.amount;
+				const currency: string | undefined = lowest?.listingPrice?.currencyCode;
+				const offerCount: number | undefined = entry?.body?.numberOfOffers?.[0]?.offerCount;
+
+				if (lowestPrice === undefined || !currency) {
+					return { asin, marketplaceId, summary: null };
+				}
+
+				return {
+					asin,
+					marketplaceId,
+					summary: {
+						lowestPrice,
+						currency,
+						offerCount: offerCount ?? 0,
+					},
+				};
+			});
+		} catch (error) {
+			throw this.createHttpError(
+				`Error: ${error}, Message: Failed to fetch competitive summary batch`,
+				500,
+				'AmazonCompetitiveSummaryBatchError'
+			);
+		}
+	}
 }
 
 export default new AmazonPricingService();

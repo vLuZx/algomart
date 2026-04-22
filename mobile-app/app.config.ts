@@ -28,5 +28,6 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   },
   extra: {
     serverHost: process.env.REACT_NATIVE_PACKAGER_HOSTNAME ?? null,
+    apiToken: process.env.API_TOKEN ?? null,
   },
 });
