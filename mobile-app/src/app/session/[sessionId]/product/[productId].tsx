@@ -1,4 +1,5 @@
 import {
+  Platform,
   Pressable,
   ScrollView,
   StatusBar,
@@ -14,7 +15,9 @@ import {
   CheckCircle2,
   ChevronLeft,
   DollarSign,
+  Hash,
   Package,
+  ScanBarcode,
 } from 'lucide-react-native';
 import { colors, font, radius, shadows } from '../../../../constants/theme';
 import { RatingStars } from '../../../../components/RatingStars';
@@ -129,6 +132,20 @@ export default function ProductDetailScreen() {
                     </View>
                   )}
                 </View>
+              </View>
+            </View>
+
+            {/* Identifier row: ASIN left, Barcode right */}
+            <View style={styles.identifierRows}>
+              <View style={styles.identifierCol}>
+                <Hash size={11} color={colors.textFaint} strokeWidth={2} />
+                <Text style={styles.identifierLabel}>ASIN</Text>
+                <Text style={styles.identifierValue}>{product.asin}</Text>
+              </View>
+              <View style={[styles.identifierCol, { justifyContent: 'flex-end' }]}>
+                <ScanBarcode size={11} color={colors.textFaint} strokeWidth={2} />
+                <Text style={styles.identifierLabel}>{product.barcodeType}</Text>
+                <Text style={styles.identifierValue}>{product.barcode}</Text>
               </View>
             </View>
           </View>
@@ -624,5 +641,42 @@ const styles = StyleSheet.create({
     fontSize: font.sizeSm,
     marginTop: 8,
     textAlign: 'center',
+  },
+  identifierRows: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginTop: 12,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  identifierCol: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    flexWrap: 'wrap',
+  },
+  identifierDivider: {
+    width: 1,
+    height: '100%',
+    backgroundColor: colors.border,
+    marginHorizontal: 10,
+  },
+  identifierRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  identifierLabel: {
+    color: colors.textFaint,
+    fontSize: 11,
+    fontWeight: '500',
+  },
+  identifierValue: {
+    color: colors.textSubtle,
+    fontSize: 11,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    letterSpacing: 0.3,
   },
 });

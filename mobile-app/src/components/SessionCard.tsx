@@ -79,12 +79,7 @@ const styles = StyleSheet.create({
   },
   cardPressed: {
     transform: [{ scale: 0.98 }],
-    shadowColor: '#d97706',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
-    shadowRadius: 10,
     elevation: 8,
-    borderColor: 'rgba(217, 119, 6, 0.40)',
   },
   row: {
     flexDirection: 'row',

@@ -5,6 +5,8 @@ export type CompetitionLevel = 'Low' | 'Medium' | 'High' | 'Very High';
 export interface SessionProduct {
   id: string;
   asin: string;
+  barcode: string;
+  barcodeType: string;
   title: string;
   image: string;
   rating: number;

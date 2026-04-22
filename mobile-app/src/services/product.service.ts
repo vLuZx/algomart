@@ -17,19 +17,47 @@ import type {
 
 /** US marketplace – matches the backend's SP_API_MARKETPLACE_ID */
 const MARKETPLACE_ID = 'ATVPDKIKX0DER';
+const DEBUG_PRODUCT_LOOKUP = __DEV__;
 
 // ── Individual endpoint calls ────────────────────────────────────────
 
 /** GET /api/amazon/catalog/barcode/:code */
 export async function fetchCatalog(barcode: string): Promise<CatalogSearchResponse> {
+  if (DEBUG_PRODUCT_LOOKUP) {
+    console.info('[Lookup] fetchCatalog request', {
+      endpoint: `/api/amazon/catalog/barcode/${barcode}`,
+      barcode,
+    });
+  }
+
   const { data } = await api.get<CatalogSearchResponse>(
     `/api/amazon/catalog/barcode/${barcode}`,
   );
+
+  if (DEBUG_PRODUCT_LOOKUP) {
+    console.info('[Lookup] fetchCatalog response', {
+      barcode,
+      numberOfResults: data.numberOfResults,
+      firstAsin: data.items?.[0]?.asin,
+    });
+  }
+
   return data;
 }
 
 /** GET /api/amazon/pricing/price?identifiers=…&type=ASIN&marketplaceId=… */
 export async function fetchPricing(asin: string): Promise<PricingResponse[]> {
+  if (DEBUG_PRODUCT_LOOKUP) {
+    console.info('[Lookup] fetchPricing request', {
+      endpoint: '/api/amazon/pricing/price',
+      params: {
+        identifiers: asin,
+        type: 'ASIN',
+        marketplaceId: MARKETPLACE_ID,
+      },
+    });
+  }
+
   const { data } = await api.get<PricingResponse[]>(
     '/api/amazon/pricing/price',
     {
@@ -40,6 +68,16 @@ export async function fetchPricing(asin: string): Promise<PricingResponse[]> {
       },
     },
   );
+
+  if (DEBUG_PRODUCT_LOOKUP) {
+    console.info('[Lookup] fetchPricing response', {
+      asin,
+      pricingCount: data.length,
+      firstPrice: data[0]?.price,
+      firstCurrency: data[0]?.currency,
+    });
+  }
+
   return data;
 }
 
@@ -50,6 +88,10 @@ export async function fetchPricing(asin: string): Promise<PricingResponse[]> {
  *   barcode → catalog (ASIN + summary) → pricing
  */
 export async function lookupByBarcode(barcode: string): Promise<ProductLookupResult> {
+  if (DEBUG_PRODUCT_LOOKUP) {
+    console.info('[Lookup] lookupByBarcode start', { barcode });
+  }
+
   // 1. Catalog search
   const catalog = await fetchCatalog(barcode);
 
@@ -72,10 +114,10 @@ export async function lookupByBarcode(barcode: string): Promise<ProductLookupRes
     }
   } catch {
     // Pricing may not be available; still return catalog data.
-    console.warn('Pricing lookup failed for ASIN', item.asin);
+    console.warn('[Lookup] Pricing lookup failed for ASIN', item.asin);
   }
 
-  return {
+  const result = {
     asin: item.asin,
     title: summary?.itemName ?? null,
     brand: summary?.brand ?? null,
@@ -83,4 +125,13 @@ export async function lookupByBarcode(barcode: string): Promise<ProductLookupRes
     price,
     currency,
   };
+
+  if (DEBUG_PRODUCT_LOOKUP) {
+    console.info('[Lookup] lookupByBarcode result', {
+      barcode,
+      ...result,
+    });
+  }
+
+  return result;
 }

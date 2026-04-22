@@ -40,6 +40,32 @@ const popularityColors: Record<SellerPopularity, string> = {
   'Very High': colors.success,
 };
 
+function getBuySignal(product: SessionProduct): { label: string; color: string; bg: string } {
+  let score = 0;
+
+  const marginPct = (product.profitMargin / product.foundPrice) * 100;
+  score += Math.min(35, Math.max(0, (marginPct / 25) * 35));
+
+  const popPts = { Low: 0, Medium: 10, High: 20, 'Very High': 25 } as const;
+  score += popPts[product.sellerPopularity];
+
+  const compPts = { Low: 20, Medium: 12, High: 5, 'Very High': 0 } as const;
+  score += compPts[product.competitionLevel];
+
+  score += Math.min(15, (product.monthlySalesEstimate / 600) * 15);
+
+  if (product.requiresApproval) score -= 5;
+  score -= Math.min(product.restrictions.length * 5, 10);
+
+  score = Math.max(0, Math.min(100, Math.round(score)));
+
+  if (score >= 82) return { label: 'Strong Buy', color: '#34d399', bg: 'rgba(52, 211, 153, 0.10)' };
+  if (score >= 64) return { label: 'Buy',         color: '#34d399', bg: 'rgba(52, 211, 153, 0.10)' };
+  if (score >= 46) return { label: 'Lean Buy',    color: '#facc15', bg: 'rgba(250, 204, 21, 0.10)' };
+  if (score >= 30) return { label: 'Neutral',     color: '#facc15', bg: 'rgba(250, 204, 21, 0.10)' };
+  return               { label: 'Avoid',          color: '#f87171', bg: 'rgba(248, 113, 113, 0.10)' };
+}
+
 export function ProductCard({
   sessionId,
   product,
@@ -107,6 +133,7 @@ export function ProductCard({
   };
 
   const popularityColor = popularityColors[product.sellerPopularity];
+  const buySignal = getBuySignal(product);
 
   return (
     <>
@@ -126,7 +153,14 @@ export function ProductCard({
         </Pressable>
 
         <View style={styles.contentRow}>
-          <Image source={{ uri: product.image }} style={styles.image} />
+          <View style={styles.imageColumn}>
+            <Image source={{ uri: product.image }} style={styles.image} />
+            <View style={[styles.buySignalTag, { backgroundColor: buySignal.bg }]}>
+              <Text style={[styles.buySignalText, { color: buySignal.color }]}>
+                {buySignal.label}
+              </Text>
+            </View>
+          </View>
 
           <View style={styles.detailsColumn}>
             <Text style={styles.title} numberOfLines={2}>
@@ -145,23 +179,12 @@ export function ProductCard({
             </View>
 
             <View style={styles.footerRow}>
-              <View style={styles.priceColumn}>
-                <View style={styles.inlinePriceRow}>
-                  <Text style={styles.priceLabel}>Amazon:</Text>
-                  <Text style={styles.priceValue}>${product.price.toFixed(2)}</Text>
-                </View>
-
-                <View style={styles.inlinePriceRow}>
-                  <Text style={styles.priceLabel}>Found:</Text>
-                  <Text style={styles.foundPriceValue}>${product.foundPrice.toFixed(2)}</Text>
-                </View>
-              </View>
-
-              <View style={styles.popularityRow}>
-                <TrendingUp size={13} color={popularityColor} strokeWidth={2.2} />
-                <Text style={[styles.popularityText, { color: popularityColor }]}>
-                  {product.sellerPopularity}
-                </Text>
+              <View style={styles.inlinePriceRow}>
+                <Text style={styles.priceLabel}>Amazon:</Text>
+                <Text style={styles.priceValue}>${product.price.toFixed(2)}</Text>
+                <Text style={styles.priceDivider}>·</Text>
+                <Text style={styles.priceLabel}>Found:</Text>
+                <Text style={styles.foundPriceValue}>${product.foundPrice.toFixed(2)}</Text>
               </View>
             </View>
           </View>
@@ -356,13 +379,30 @@ const styles = StyleSheet.create({
   },
   contentRow: {
     flexDirection: 'row',
+    alignItems: 'flex-end',
     gap: 12,
+  },
+  imageColumn: {
+    alignItems: 'center',
+    gap: 6,
   },
   image: {
     width: 80,
     height: 80,
     borderRadius: radius.sm,
     backgroundColor: colors.bgCard,
+  },
+  buySignalTag: {
+    alignSelf: 'stretch',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radius.sm,
+    paddingVertical: 3,
+  },
+  buySignalText: {
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.3,
   },
   detailsColumn: {
     flex: 1,
@@ -416,14 +456,19 @@ const styles = StyleSheet.create({
     color: colors.textSubtle,
     fontSize: font.sizeXs,
   },
+  priceDivider: {
+    color: colors.textFaint,
+    fontSize: font.sizeXs,
+    marginHorizontal: 2,
+  },
   priceValue: {
     color: colors.textMuted,
     fontSize: font.sizeXs,
     fontWeight: font.weightMedium,
   },
   foundPriceValue: {
-    color: colors.accent,
-    fontSize: font.sizeLg,
+    color: colors.textMuted,
+    fontSize: font.sizeXs,
     fontWeight: font.weightMedium,
   },
   popularityRow: {

@@ -31,26 +31,25 @@ import { useSessions } from '../../../store/sessions';
 import type { SessionProduct } from '../../../types/product';
 
 type SortOption =
+  | 'signal-desc'
+  | 'signal-asc'
   | 'profit-desc'
   | 'profit-asc'
   | 'price-desc'
-  | 'price-asc'
-  | 'rating-desc'
-  | 'rating-asc'
-  | 'name-asc'
-  | 'name-desc';
+  | 'price-asc';
 
 const popularityLevels = ['Low', 'Medium', 'High', 'Very High'] as const;
 
+const buySignalLevels = ['Strong Buy', 'Buy', 'Lean Buy', 'Neutral', 'Avoid'] as const;
+type BuySignalLabel = (typeof buySignalLevels)[number];
+
 const sortOptions: readonly { value: SortOption; label: string }[] = [
+  { value: 'signal-desc', label: 'Buy Signal: High to Low' },
+  { value: 'signal-asc',  label: 'Buy Signal: Low to High' },
   { value: 'profit-desc', label: 'Profit: High to Low' },
-  { value: 'profit-asc', label: 'Profit: Low to High' },
-  { value: 'price-desc', label: 'Price: High to Low' },
-  { value: 'price-asc', label: 'Price: Low to High' },
-  { value: 'rating-desc', label: 'Rating: High to Low' },
-  { value: 'rating-asc', label: 'Rating: Low to High' },
-  { value: 'name-asc', label: 'Name: A to Z' },
-  { value: 'name-desc', label: 'Name: Z to A' },
+  { value: 'profit-asc',  label: 'Profit: Low to High' },
+  { value: 'price-desc',  label: 'Price: High to Low' },
+  { value: 'price-asc',   label: 'Price: Low to High' },
 ];
 
 function getRouteParam(value: string | string[] | undefined) {
@@ -61,6 +60,28 @@ function getProfit(product: SessionProduct) {
   return product.price - product.foundPrice;
 }
 
+function computeSignalScore(product: SessionProduct): number {
+  let score = 0;
+  const marginPct = (product.profitMargin / product.foundPrice) * 100;
+  score += Math.min(35, Math.max(0, (marginPct / 25) * 35));
+  const popPts = { Low: 0, Medium: 10, High: 20, 'Very High': 25 } as const;
+  score += popPts[product.sellerPopularity];
+  const compPts = { Low: 20, Medium: 12, High: 5, 'Very High': 0 } as const;
+  score += compPts[product.competitionLevel];
+  score += Math.min(15, (product.monthlySalesEstimate / 600) * 15);
+  if (product.requiresApproval) score -= 5;
+  score -= Math.min(product.restrictions.length * 5, 10);
+  return Math.max(0, Math.min(100, Math.round(score)));
+}
+
+function getSignalLabel(score: number): BuySignalLabel {
+  if (score >= 82) return 'Strong Buy';
+  if (score >= 64) return 'Buy';
+  if (score >= 46) return 'Lean Buy';
+  if (score >= 30) return 'Neutral';
+  return 'Avoid';
+}
+
 function sortProducts(products: SessionProduct[], sortBy: SortOption) {
   const sorted = [...products];
 
@@ -69,6 +90,10 @@ function sortProducts(products: SessionProduct[], sortBy: SortOption) {
     const rightProfit = getProfit(right);
 
     switch (sortBy) {
+      case 'signal-desc':
+        return computeSignalScore(right) - computeSignalScore(left);
+      case 'signal-asc':
+        return computeSignalScore(left) - computeSignalScore(right);
       case 'profit-desc':
         return rightProfit - leftProfit;
       case 'profit-asc':
@@ -77,14 +102,6 @@ function sortProducts(products: SessionProduct[], sortBy: SortOption) {
         return right.price - left.price;
       case 'price-asc':
         return left.price - right.price;
-      case 'rating-desc':
-        return right.rating - left.rating;
-      case 'rating-asc':
-        return left.rating - right.rating;
-      case 'name-asc':
-        return left.title.localeCompare(right.title);
-      case 'name-desc':
-        return right.title.localeCompare(left.title);
       default:
         return 0;
     }
@@ -110,8 +127,8 @@ export default function SessionDetailScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [showFilters, setShowFilters] = useState(false);
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
-  const [selectedPopularity, setSelectedPopularity] = useState<string[]>([]);
-  const [sortBy, setSortBy] = useState<SortOption>('profit-desc');
+  const [selectedSignals, setSelectedSignals] = useState<BuySignalLabel[]>([]);
+  const [sortBy, setSortBy] = useState<SortOption>('signal-desc');
   const [sortModalVisible, setSortModalVisible] = useState(false);
   const [showResyncModal, setShowResyncModal] = useState(false);
 
@@ -136,15 +153,17 @@ export default function SessionDetailScreen() {
       result = result.filter((product) => selectedCategories.includes(product.category));
     }
 
-    if (selectedPopularity.length > 0) {
-      result = result.filter((product) => selectedPopularity.includes(product.sellerPopularity));
+    if (selectedSignals.length > 0) {
+      result = result.filter((product) =>
+        selectedSignals.includes(getSignalLabel(computeSignalScore(product))),
+      );
     }
 
     return sortProducts(result, sortBy);
-  }, [products, searchQuery, selectedCategories, selectedPopularity, sortBy]);
+  }, [products, searchQuery, selectedCategories, selectedSignals, sortBy]);
 
   const hasActiveFilters =
-    searchQuery.trim().length > 0 || selectedCategories.length > 0 || selectedPopularity.length > 0;
+    searchQuery.trim().length > 0 || selectedCategories.length > 0 || selectedSignals.length > 0;
 
   const selectedSortLabel = sortOptions.find((option) => option.value === sortBy)?.label ?? 'Sort';
   const productNames = useMemo(() => products.map((product) => product.title), [products]);
@@ -163,11 +182,11 @@ export default function SessionDetailScreen() {
     );
   };
 
-  const togglePopularity = (level: string) => {
-    setSelectedPopularity((current) =>
-      current.includes(level)
-        ? current.filter((item) => item !== level)
-        : [...current, level],
+  const toggleSignal = (signal: BuySignalLabel) => {
+    setSelectedSignals((current) =>
+      current.includes(signal)
+        ? current.filter((item) => item !== signal)
+        : [...current, signal],
     );
   };
 
@@ -272,25 +291,25 @@ export default function SessionDetailScreen() {
 
           <View style={styles.filterGroup}>
             <View style={styles.filterLabelRow}>
-              <Text style={styles.filterLabel}>Seller Popularity</Text>
-              {selectedPopularity.length > 0 ? (
-                <Pressable onPress={() => setSelectedPopularity([])}>
+              <Text style={styles.filterLabel}>Buy Signal</Text>
+              {selectedSignals.length > 0 ? (
+                <Pressable onPress={() => setSelectedSignals([])}>
                   <Text style={styles.clearText}>Clear</Text>
                 </Pressable>
               ) : null}
             </View>
 
             <View style={styles.chipWrap}>
-              {popularityLevels.map((level) => {
-                const selected = selectedPopularity.includes(level);
+              {buySignalLevels.map((signal) => {
+                const selected = selectedSignals.includes(signal);
 
                 return (
                   <Pressable
-                    key={level}
+                    key={signal}
                     style={[styles.chip, selected && styles.chipSelected]}
-                    onPress={() => togglePopularity(level)}
+                    onPress={() => toggleSignal(signal)}
                   >
-                    <Text style={[styles.chipText, selected && styles.chipTextSelected]}>{level}</Text>
+                    <Text style={[styles.chipText, selected && styles.chipTextSelected]}>{signal}</Text>
                   </Pressable>
                 );
               })}
@@ -666,6 +685,7 @@ const styles = StyleSheet.create({
   },
   listContent: {
     paddingHorizontal: 16,
+    paddingTop: 16,
     paddingBottom: 32,
     flexGrow: 1,
   },

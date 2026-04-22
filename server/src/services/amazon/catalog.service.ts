@@ -11,7 +11,7 @@ import { inferBarcodeType,  isValidBarcode } from '../../utils/barcode.utils.js'
  */
 class AmazonCatalogService {
 	private readonly API_VERSION = '2022-04-01';
-	private readonly SEARCH_INCLUDED_DATA = 'identifiers,summaries,productTypes';
+	private readonly SEARCH_INCLUDED_DATA = 'identifiers,summaries,productTypes,salesRanks,dimensions,images,attributes';
 
 	private createHttpError(message: string, statusCode: number, name = 'AmazonCatalogError'): Error {
 		const error = new Error(message) as Error & { statusCode?: number };

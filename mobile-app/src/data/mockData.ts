@@ -7,6 +7,21 @@ import type {
   SessionProduct,
 } from '../types/product';
 
+const BARCODE_TYPES = ['UPC-A', 'EAN-13', 'UPC-E'] as const;
+
+function generateBarcode(seed: number, type: string): string {
+  const base = (123456780000 + seed * 31337) % 1_000_000_000_000;
+  if (type === 'EAN-13') return String(base).padStart(13, '0');
+  if (type === 'UPC-E') return String(base % 10_000_000).padStart(8, '0');
+  return String(base % 1_000_000_000_000).padStart(12, '0'); // UPC-A
+}
+
+function getBarcodeInfo(index: number): { barcode: string; barcodeType: string } {
+  const barcodeType = BARCODE_TYPES[index % BARCODE_TYPES.length];
+  const barcode = generateBarcode(index, barcodeType);
+  return { barcode, barcodeType };
+}
+
 interface SessionSeed {
   id: string;
   title: string;
@@ -18,6 +33,8 @@ interface ProductSeed extends ScannerSeedProduct {
   key: string;
   foundPrice: number;
   reviewCount: number;
+  barcode: string;
+  barcodeType: string;
   requiresApproval?: boolean;
   restrictions?: string[];
 }
@@ -101,6 +118,8 @@ const productSeeds: ProductSeed[] = [
   {
     key: '1',
     asin: 'B08XM4X5J1',
+    barcode: '012345678905',
+    barcodeType: 'UPC-A',
     title: 'Wireless Bluetooth Headphones with Active Noise Cancellation',
     image: 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=400&h=400&fit=crop',
     rating: 4.5,
@@ -114,6 +133,8 @@ const productSeeds: ProductSeed[] = [
   {
     key: '2',
     asin: 'B08KJ4Z8TW',
+    barcode: '4006381333931',
+    barcodeType: 'EAN-13',
     title: 'Premium Leather Crossbody Bag for Women',
     image: 'https://images.unsplash.com/photo-1548036328-c9fa89d128fa?w=400&h=400&fit=crop',
     rating: 4.8,
@@ -126,6 +147,8 @@ const productSeeds: ProductSeed[] = [
   {
     key: '3',
     asin: 'B09JQMJHXT',
+    barcode: '01234565',
+    barcodeType: 'UPC-E',
     title: 'Smart Watch Fitness Tracker with Heart Rate Monitor',
     image: 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=400&h=400&fit=crop',
     rating: 4.3,
@@ -138,6 +161,8 @@ const productSeeds: ProductSeed[] = [
   {
     key: '4',
     asin: 'B07Q2BGKQ3',
+    barcode: '075678164125',
+    barcodeType: 'UPC-A',
     title: 'Stainless Steel Water Bottle - 32oz Insulated',
     image: 'https://images.unsplash.com/photo-1602143407151-7111542de6e8?w=400&h=400&fit=crop',
     rating: 4.7,
@@ -150,6 +175,8 @@ const productSeeds: ProductSeed[] = [
   {
     key: '5',
     asin: 'B09MFDZ2JN',
+    barcode: '5901234123457',
+    barcodeType: 'EAN-13',
     title: 'Organic Cotton Bed Sheet Set - Queen Size',
     image: 'https://images.unsplash.com/photo-1631049307264-da0ec9d70304?w=400&h=400&fit=crop',
     rating: 4.6,
@@ -162,6 +189,8 @@ const productSeeds: ProductSeed[] = [
   {
     key: '6',
     asin: 'B08F3GQPZX',
+    barcode: '08137094',
+    barcodeType: 'UPC-E',
     title: 'Professional Chef Knife Set - 8 Pieces',
     image: 'https://images.unsplash.com/photo-1593618998160-e34014e67546?w=400&h=400&fit=crop',
     rating: 4.9,
@@ -176,6 +205,8 @@ const productSeeds: ProductSeed[] = [
   {
     key: '7',
     asin: 'B08D9P4PQH',
+    barcode: '036000291452',
+    barcodeType: 'UPC-A',
     title: 'Ergonomic Office Chair with Lumbar Support',
     image: 'https://images.unsplash.com/photo-1580480055273-228ff5388ef8?w=400&h=400&fit=crop',
     rating: 4.4,
@@ -188,6 +219,8 @@ const productSeeds: ProductSeed[] = [
   {
     key: '8',
     asin: 'B09TKS3MKL',
+    barcode: '8710398501738',
+    barcodeType: 'EAN-13',
     title: 'Portable Bluetooth Speaker - Waterproof',
     image: 'https://images.unsplash.com/photo-1608043152269-423dbba4e7e1?w=400&h=400&fit=crop',
     rating: 4.5,
@@ -200,6 +233,8 @@ const productSeeds: ProductSeed[] = [
   {
     key: '9',
     asin: 'B08G7YJ1XL',
+    barcode: '02345671',
+    barcodeType: 'UPC-E',
     title: 'Yoga Mat with Carrying Strap - Non-Slip',
     image: 'https://images.unsplash.com/photo-1601925260368-ae2f83cf8b7f?w=400&h=400&fit=crop',
     rating: 4.6,
@@ -212,6 +247,8 @@ const productSeeds: ProductSeed[] = [
   {
     key: '10',
     asin: 'B08WNXM9PL',
+    barcode: '049000042566',
+    barcodeType: 'UPC-A',
     title: 'Digital Air Fryer - 6 Quart Capacity',
     image: 'https://images.unsplash.com/photo-1585076800246-50c29df5ced4?w=400&h=400&fit=crop',
     rating: 4.7,
@@ -224,6 +261,8 @@ const productSeeds: ProductSeed[] = [
   {
     key: '11',
     asin: 'B09P6BNQYK',
+    barcode: '3045140105502',
+    barcodeType: 'EAN-13',
     title: 'Gaming Mouse with RGB Lighting - Programmable',
     image: 'https://images.unsplash.com/photo-1527814050087-3793815479db?w=400&h=400&fit=crop',
     rating: 4.4,
@@ -236,6 +275,8 @@ const productSeeds: ProductSeed[] = [
   {
     key: '12',
     asin: 'B08F1R3B9V',
+    barcode: '06038300026',
+    barcodeType: 'UPC-E',
     title: 'Ceramic Plant Pots Set of 3 with Drainage',
     image: 'https://images.unsplash.com/photo-1485955900006-10f4d324d411?w=400&h=400&fit=crop',
     rating: 4.5,
@@ -265,6 +306,8 @@ function buildProduct(seed: ProductSeed, sessionId: string, sessionIndex: number
   return {
     id: `${sessionId}-${seed.key}-${index + 1}`,
     asin: seed.asin,
+    barcode: seed.barcode,
+    barcodeType: seed.barcodeType,
     title: seed.title,
     image: seed.image,
     rating: seed.rating,
@@ -366,6 +409,7 @@ export function createScannedProduct(
   return {
     id: `${sessionId}-scan-${sequence}`,
     asin: input.asin,
+    ...getBarcodeInfo(sequence),
     title: input.title,
     image: input.image,
     rating: input.rating,
