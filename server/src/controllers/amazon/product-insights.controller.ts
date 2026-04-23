@@ -13,6 +13,7 @@ const VALID_FIELDS: ProductInsightField[] = [
 	'pricing',
 	'competitivePricing',
 	'offers',
+	'fees',
 ];
 
 function parseFields(raw: unknown): ProductInsightField[] {
