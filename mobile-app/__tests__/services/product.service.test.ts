@@ -102,6 +102,18 @@ const insightsResponse: ProductInsightsResponse = {
       ],
     },
     offers: { payload: [{ Summary: { TotalOfferCount: 5 } }] },
+    fees: {
+      asin: ASIN,
+      marketplaceId: 'ATVPDKIKX0DER',
+      currency: 'USD',
+      listingPrice: 24.99,
+      totalFees: 4.5,
+      feeBreakdown: [
+        { type: 'ReferralFee', amount: 3.75 },
+        { type: 'FBAFees', amount: 0.75 },
+      ],
+      status: 'Success',
+    },
   },
 };
 
@@ -144,7 +156,7 @@ describe('fetchInsightsByBarcode', () => {
     expect(mockGet).toHaveBeenCalledWith('/api/amazon/insights', {
       params: {
         barcode: BARCODE,
-        fields: 'summary,images,dimensions,salesRank,bsr,pricing,offers',
+        fields: 'summary,images,dimensions,salesRank,bsr,pricing,competitivePricing,offers,fees',
       },
     });
     expect(result).toEqual(insightsResponse);
@@ -171,6 +183,11 @@ describe('lookupByBarcode', () => {
       salesRank: 1234,
       bsr: { rank: 1234, category: 'Sports', link: 'https://example.com' },
       offersCount: 5,
+      amazonFees: 4.5,
+      feeBreakdown: [
+        { type: 'ReferralFee', amount: 3.75 },
+        { type: 'FBAFees', amount: 0.75 },
+      ],
     });
   });
 
@@ -196,7 +213,66 @@ describe('lookupByBarcode', () => {
       salesRank: null,
       bsr: null,
       offersCount: null,
+      amazonFees: null,
+      feeBreakdown: [],
     });
+  });
+
+  it('resolves price from offers.Summary.BuyBoxPrices when pricing + competitivePricing 404', async () => {
+    const gatedInsights: ProductInsightsResponse = {
+      asin: 'B006IB5T4W',
+      marketplaceId: 'ATVPDKIKX0DER',
+      fields: {
+        summary: {
+          itemName: 'Aquaphor Healing Ointment',
+          brand: 'Aquaphor',
+          manufacturer: 'Aquaphor',
+          browseClassification: { displayName: 'Creams' },
+        },
+        offers: {
+          payload: {
+            ASIN: 'B006IB5T4W',
+            status: 'Success',
+            Summary: {
+              BuyBoxPrices: [
+                { condition: 'New', ListingPrice: { CurrencyCode: 'USD', Amount: 18.37 } },
+              ],
+              LowestPrices: [
+                {
+                  condition: 'new',
+                  fulfillmentChannel: 'Amazon',
+                  ListingPrice: { CurrencyCode: 'USD', Amount: 18.37 },
+                },
+              ],
+              TotalOfferCount: 13,
+            },
+          },
+        },
+        fees: {
+          asin: 'B006IB5T4W',
+          marketplaceId: 'ATVPDKIKX0DER',
+          currency: 'USD',
+          listingPrice: 18.37,
+          totalFees: null,
+          feeBreakdown: [],
+          status: 'ClientError',
+          error: 'Invalid seller registration.',
+        },
+      },
+      errors: {
+        pricing: 'AmazonRequestError: 404',
+        competitivePricing: 'AmazonRequestError: 404',
+      },
+    };
+
+    mockGet.mockResolvedValueOnce({ data: gatedInsights } as any);
+
+    const result = await lookupByBarcode('360331145562');
+
+    expect(result.price).toBe(18.37);
+    expect(result.currency).toBe('USD');
+    expect(result.asin).toBe('B006IB5T4W');
+    expect(result.title).toBe('Aquaphor Healing Ointment');
   });
 
   it('throws when the fallback catalog returns zero results', async () => {

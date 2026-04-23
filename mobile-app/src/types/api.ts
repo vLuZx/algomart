@@ -47,7 +47,8 @@ export type ProductInsightField =
   | 'bsr'
   | 'pricing'
   | 'competitivePricing'
-  | 'offers';
+  | 'offers'
+  | 'fees';
 
 export interface ProductInsightsBsr {
   rank: number;
@@ -97,4 +98,6 @@ export interface ProductLookupResult {
   salesRank: number | null;
   bsr: ProductInsightsBsr | null;
   offersCount: number | null;
+  amazonFees: number | null;
+  feeBreakdown: FeesEstimateBreakdownItem[];
 }

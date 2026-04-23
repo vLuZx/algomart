@@ -9,10 +9,8 @@ function getBaseUrl(): string {
 
 export const API_BASE_URL = getBaseUrl();
 
-const API_TOKEN =
-  (Constants.expoConfig?.extra?.apiToken as string | undefined) ??
-  (Constants.manifest2?.extra?.expoClient?.extra?.apiToken as string | undefined) ??
-  process.env.API_TOKEN;
+// CHANGE LATER, for now we'll keep it.
+const API_TOKEN = "AlgoA|qH3PCpmoeIi53r/HZmEeFTzxcWVOifBHAtRSpPMDsNox12zadERFnQtIDqdugTMkuwMqo9k4xGjsyqC/fH5PNg==923js01HAV61";
 
 export const api = axios.create({
   baseURL: API_BASE_URL,

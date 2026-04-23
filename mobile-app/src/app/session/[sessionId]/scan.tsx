@@ -26,7 +26,7 @@ import {
 import { ChevronLeft, DollarSign, ScanLine, X } from 'lucide-react-native';
 import { GradientButton } from '../../../components/GradientButton';
 import { colors, font, radius, shadows } from '../../../constants/theme';
-import { lookupByBarcode, fetchFeesEstimate } from '../../../services/product.service';
+import { lookupByBarcode } from '../../../services/product.service';
 import { useSessions } from '../../../store/sessions';
 import type { ProductLookupResult } from '../../../types/api';
 import type { ScannedProductInput } from '../../../types/product';
@@ -51,11 +51,11 @@ function buildScannedInput(
   lookup: ProductLookupResult,
   foundPrice: number,
   scan: { barcode: string; barcodeType: string },
-  amazonFees?: number | null,
 ): ScannedProductInput {
-  // Enrichment fields come from `/api/amazon/insights` via lookupByBarcode.
-  // Fields SP-API does not expose (rating, sellerPopularity, competitionLevel,
-  // etc.) stay at neutral defaults until new APIs back them.
+  // All enrichment (including amazonFees) comes from the single
+  // /api/amazon/insights call in lookupByBarcode. Fields SP-API does not
+  // expose (rating, sellerPopularity, competitionLevel, etc.) stay at
+  // neutral defaults until new APIs back them.
   return {
     asin: lookup.asin,
     title: lookup.title ?? lookup.brand ?? 'Unknown Product',
@@ -71,7 +71,7 @@ function buildScannedInput(
     ...(lookup.weight ? { weight: lookup.weight } : {}),
     ...(lookup.salesRank !== null ? { salesRank: lookup.salesRank } : {}),
     ...(lookup.bsr ? { bsr: lookup.bsr.rank } : {}),
-    ...(typeof amazonFees === 'number' ? { amazonFees } : {}),
+    ...(typeof lookup.amazonFees === 'number' ? { amazonFees: lookup.amazonFees } : {}),
   };
 }
 
@@ -162,29 +162,19 @@ export default function ScanScreen() {
     return Number.isFinite(value) && value > 0 ? value : null;
   }, [foundPriceText]);
 
-  const handleConfirm = useCallback(async () => {
+  const handleConfirm = useCallback(() => {
     if (!sessionId || !lookupResult || parsedFoundPrice === null || !scannedCode) return;
     if (isConfirming) return;
 
     setIsConfirming(true);
-
-    // Only call the Fees API if Amazon returned a listing price. Without a
-    // sell price we have nothing to estimate fees against.
-    let amazonFees: number | null = null;
-    if (typeof lookupResult.price === 'number' && lookupResult.price > 0) {
-      try {
-        const fees = await fetchFeesEstimate(lookupResult.asin, lookupResult.price, {
-          ...(lookupResult.currency ? { currency: lookupResult.currency } : {}),
-        });
-        amazonFees = fees.totalFees;
-      } catch (error) {
-        console.warn('[Scan] Fees estimate failed; continuing without fees', error);
-      }
-    }
-
     try {
-      const input = buildScannedInput(lookupResult, parsedFoundPrice, scannedCode, amazonFees);
+      const input = buildScannedInput(lookupResult, parsedFoundPrice, scannedCode);
+      console.debug('[Scan] confirm: lookupResult.price =', lookupResult.price);
+      console.debug('[Scan] confirm: parsedFoundPrice =', parsedFoundPrice);
+      console.debug('[Scan] confirm: input.price (→ Amazon Price) =', input.price);
+      console.debug('[Scan] confirm: input.amazonFees =', input.amazonFees);
       const product = addScannedProduct(sessionId, input);
+      console.debug('[Scan] stored product.price =', product.price);
       resetScan();
       router.replace(`/session/${sessionId}/product/${product.id}`);
     } catch (error) {
@@ -354,7 +344,7 @@ export default function ScanScreen() {
               </View>
 
               <GradientButton
-                label={isConfirming ? 'Calculating fees…' : 'Confirm'}
+                label="Confirm"
                 onPress={handleConfirm}
                 disabled={parsedFoundPrice === null || isConfirming}
                 style={styles.confirmButton}

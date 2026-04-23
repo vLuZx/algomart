@@ -10,6 +10,7 @@ import { api } from './api';
 import type {
   CatalogSearchResponse,
   FeesEstimate,
+  FeesEstimateBreakdownItem,
   PricingResponse,
   ProductInsightField,
   ProductInsightsBsr,
@@ -28,7 +29,9 @@ const INSIGHTS_FIELDS: ProductInsightField[] = [
   'salesRank',
   'bsr',
   'pricing',
+  'competitivePricing',
   'offers',
+  'fees',
 ];
 
 // ── Individual endpoint calls ────────────────────────────────────────
@@ -144,7 +147,9 @@ function extractBsr(fields: ProductInsightsResponse['fields']): ProductInsightsB
 
 /**
  * Best-effort extraction from the raw SP-API GetPricing response.
- * Falls back to null when Amazon's shape does not match expected paths.
+ * GetPricing v0 only returns YOUR own offers, so for ASINs you don't sell
+ * `Product.Offers` is empty and we return null. Callers should then try
+ * `extractPriceFromRawOffers` for the market price.
  */
 function extractPriceFromRawPricing(raw: unknown): { price: number | null; currency: string | null } {
   if (!raw || typeof raw !== 'object') return { price: null, currency: null };
@@ -157,10 +162,88 @@ function extractPriceFromRawPricing(raw: unknown): { price: number | null; curre
   return { price, currency };
 }
 
+/**
+ * Walks the GetItemOffers payload (which is an OBJECT, not an array)
+ * for Buy Box price → Lowest price. This is the actual market price.
+ */
+function extractPriceFromRawOffers(raw: unknown): {
+  price: number | null;
+  currency: string | null;
+  source: string | null;
+} {
+  if (!raw || typeof raw !== 'object') return { price: null, currency: null, source: null };
+  const payload = (raw as { payload?: unknown }).payload;
+  const obj = Array.isArray(payload) ? (payload[0] as any) : (payload as any);
+  const summary = obj?.Summary;
+  if (!summary) return { price: null, currency: null, source: null };
+
+  const buyBox = summary.BuyBoxPrices?.[0]?.ListingPrice;
+  if (typeof buyBox?.Amount === 'number') {
+    return {
+      price: buyBox.Amount,
+      currency: typeof buyBox.CurrencyCode === 'string' ? buyBox.CurrencyCode : 'USD',
+      source: 'offers.Summary.BuyBoxPrices',
+    };
+  }
+  const lowest = summary.LowestPrices?.[0]?.ListingPrice;
+  if (typeof lowest?.Amount === 'number') {
+    return {
+      price: lowest.Amount,
+      currency: typeof lowest.CurrencyCode === 'string' ? lowest.CurrencyCode : 'USD',
+      source: 'offers.Summary.LowestPrices',
+    };
+  }
+  return { price: null, currency: null, source: null };
+}
+
+/**
+ * Walks the GetCompetitivePricing response for the Buy Box competitive
+ * price. Reliable fallback for restricted / gated ASINs where GetPricing
+ * returns 404 and GetItemOffers rejects the ItemCondition.
+ */
+function extractPriceFromCompetitive(raw: unknown): {
+  price: number | null;
+  currency: string | null;
+  source: string | null;
+} {
+  if (!raw || typeof raw !== 'object') return { price: null, currency: null, source: null };
+  const payload = (raw as { payload?: unknown }).payload;
+  const first = Array.isArray(payload) ? (payload[0] as any) : (payload as any);
+  const list = first?.Product?.CompetitivePricing?.CompetitivePrices;
+  const buyBox = Array.isArray(list)
+    ? list.find((p: any) => p?.CompetitivePriceId === '1') ?? list[0]
+    : undefined;
+  const listing = buyBox?.Price?.ListingPrice;
+  if (typeof listing?.Amount === 'number') {
+    return {
+      price: listing.Amount,
+      currency: typeof listing.CurrencyCode === 'string' ? listing.CurrencyCode : 'USD',
+      source: 'competitivePricing',
+    };
+  }
+  return { price: null, currency: null, source: null };
+}
+
 function extractOffersCount(fields: ProductInsightsResponse['fields']): number | null {
-  const raw = fields.offers as { payload?: Array<{ Summary?: { TotalOfferCount?: number } }> } | undefined;
-  const count = raw?.payload?.[0]?.Summary?.TotalOfferCount;
+  const raw = fields.offers as { payload?: unknown } | undefined;
+  if (!raw) return null;
+  // `payload` is an object for single-ASIN GetItemOffers, but can be an
+  // array for batched responses — handle both.
+  const obj = Array.isArray(raw.payload) ? (raw.payload[0] as any) : (raw.payload as any);
+  const count = obj?.Summary?.TotalOfferCount;
   return typeof count === 'number' ? count : null;
+}
+
+function extractFees(fields: ProductInsightsResponse['fields']): {
+  amazonFees: number | null;
+  feeBreakdown: FeesEstimateBreakdownItem[];
+} {
+  const fees = fields.fees as FeesEstimate | undefined;
+  if (!fees) return { amazonFees: null, feeBreakdown: [] };
+  return {
+    amazonFees: typeof fees.totalFees === 'number' ? fees.totalFees : null,
+    feeBreakdown: Array.isArray(fees.feeBreakdown) ? fees.feeBreakdown : [],
+  };
 }
 
 // ── Combined lookup ──────────────────────────────────────────────────
@@ -176,9 +259,36 @@ export async function lookupByBarcode(barcode: string): Promise<ProductLookupRes
 
   try {
     const insights = await fetchInsightsByBarcode(barcode);
+
+    // ── DEBUG: log the full insights payload structure ───────────────
+    console.debug('[Lookup] insights.asin =', insights.asin);
+    console.debug('[Lookup] insights.errors =', insights.errors ?? null);
+    console.debug('[Lookup] insights.fields keys =', Object.keys(insights.fields ?? {}));
+    console.debug('[Lookup] raw pricing =', JSON.stringify(insights.fields.pricing ?? null));
+    console.debug('[Lookup] raw offers  =', JSON.stringify(insights.fields.offers ?? null));
+    console.debug('[Lookup] raw fees    =', JSON.stringify(insights.fields.fees ?? null));
+
     const summary = extractSummary(insights.fields);
-    const { price, currency } = extractPriceFromRawPricing(insights.fields.pricing);
+    const fromPricing = extractPriceFromRawPricing(insights.fields.pricing);
+    const fromOffers = extractPriceFromRawOffers(insights.fields.offers);
+    const fromCompetitive = extractPriceFromCompetitive(insights.fields.competitivePricing);
+
+    // Prefer own pricing, then Buy Box/Lowest from offers, then competitive.
+    const price = fromPricing.price ?? fromOffers.price ?? fromCompetitive.price;
+    const currency = fromPricing.currency ?? fromOffers.currency ?? fromCompetitive.currency;
+    console.debug(
+      '[Lookup] price resolution =',
+      JSON.stringify({
+        fromPricing,
+        fromOffers,
+        fromCompetitive,
+        resolvedPrice: price,
+        resolvedCurrency: currency,
+      }),
+    );
+
     const { dimensions, weight } = formatDimensions(insights.fields.dimensions);
+    const { amazonFees, feeBreakdown } = extractFees(insights.fields);
 
     const result: ProductLookupResult = {
       asin: insights.asin,
@@ -194,11 +304,11 @@ export async function lookupByBarcode(barcode: string): Promise<ProductLookupRes
       salesRank: extractSalesRank(insights.fields),
       bsr: extractBsr(insights.fields),
       offersCount: extractOffersCount(insights.fields),
+      amazonFees,
+      feeBreakdown,
     };
 
-    if (DEBUG_PRODUCT_LOOKUP) {
-      console.info('[Lookup] insights result', { barcode, result, errors: insights.errors });
-    }
+    console.debug('[Lookup] final ProductLookupResult =', JSON.stringify(result));
 
     return result;
   } catch (insightsError) {
@@ -242,5 +352,7 @@ async function lookupByBarcodeLegacy(barcode: string): Promise<ProductLookupResu
     salesRank: null,
     bsr: null,
     offersCount: null,
+    amazonFees: null,
+    feeBreakdown: [],
   };
 }
