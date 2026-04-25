@@ -26,52 +26,134 @@ export type ApiErrorResponse = {
 
 // @section Catalog Items
 
-export type CatalogSearchResponse = {
-	numberOfResults: number;
-	items: CatalogItem[];
-};
+export type AmazonCatalogResponse = {
+	items: AmazonItem[]
+}
 
-export type CatalogItem = {
-	asin: string;
-	identifiers: CatalogItemIdentifierGroup[];
-	productTypes?: CatalogItemProductType[];
-	summaries?: CatalogItemSummary[];
-};
+export type AmazonItem = {
+	asin: string
 
-export type CatalogItemIdentifierGroup = {
-	marketplaceId: string;
-	identifiers: CatalogIdentifier[];
-};
+	attributes?: AmazonAttributes
 
-export type CatalogIdentifier = {
-	identifierType: BarcodeType;
-	identifier: string;
-};
+	dimensions?: AmazonDimension[]
 
-export type CatalogItemProductType = {
-	marketplaceId: string;
-	productType: string;
-};
+	identifiers?: AmazonIdentifierGroup[]
 
-export type CatalogItemSummary = {
-	marketplaceId: string;
+	images?: AmazonImageGroup[]
 
-	adultProduct?: boolean;
-	autographed?: boolean;
-	brand?: string;
+	productTypes?: {
+		marketplaceId: string
+		productType: string
+	}[]
+
+	salesRanks?: AmazonSalesRank[]
+
+	summaries?: AmazonSummary[]
+}
+
+export type AmazonAttributes = {
+	brand?: {
+		value: string
+	}[]
+
+	item_name?: {
+		value: string
+	}[]
+
+	list_price?: {
+		currency: string
+		value: number
+	}[]
+
+	externally_assigned_product_identifier?: {
+		value: string
+		type: string
+	}[]
+
+	bullet_point?: {
+		value: string
+	}[]
+
+	item_weight?: {
+		unit: string
+		value: number
+	}[]
+
+	item_dimensions?: {
+		length: { unit: string; value: number }
+		width: { unit: string; value: number }
+		height: { unit: string; value: number }
+	}[]
+
+	// fallback for unknown keys
+	[key: string]: any
+}
+
+export type AmazonDimension = {
+	marketplaceId: string
+	item?: AmazonPhysicalDimensions
+	package?: AmazonPhysicalDimensions
+}
+
+type AmazonPhysicalDimensions = {
+	height?: { unit: string; value: number }
+	length?: { unit: string; value: number }
+	width?: { unit: string; value: number }
+	weight?: { unit: string; value: number }
+}
+
+export type AmazonIdentifierGroup = {
+	marketplaceId: string
+	identifiers: {
+		identifierType: string
+		identifier: string
+	}[]
+}
+
+export type AmazonImageGroup = {
+	marketplaceId: string
+	images: {
+		variant: string
+		link: string
+		height: number
+		width: number
+	}[]
+}
+
+export type AmazonSalesRank = {
+	marketplaceId: string
+
+	classificationRanks?: {
+		classificationId: string
+		title: string
+		link: string
+		rank: number
+	}[]
+
+	displayGroupRanks?: {
+		websiteDisplayGroup: string
+		title: string
+		link: string
+		rank: number
+	}[]
+}
+
+export type AmazonSummary = {
+	marketplaceId: string
+
+	itemName?: string
+	brand?: string
+	manufacturer?: string
 
 	browseClassification?: {
-		displayName: string;
-		classificationId: string;
-	};
+		displayName: string
+		classificationId: string
+	}
 
-	itemClassification?: string;
-	itemName?: string;
-	manufacturer?: string;
-	memorabilia?: boolean;
-	packageQuantity?: number;
-	size?: string;
-	tradeInEligible?: boolean;
-	websiteDisplayGroup?: string;
-	websiteDisplayGroupName?: string;
-};
+	itemClassification?: string
+	packageQuantity?: number
+	size?: string
+	style?: string
+
+	releaseDate?: string
+}

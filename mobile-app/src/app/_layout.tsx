@@ -1,33 +1,31 @@
-/**
- * Root Layout
- * Sets up providers and navigation structure
- */
-
-import { Stack } from 'expo-router';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
-
-// Create QueryClient instance
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      retry: 2,
-      staleTime: 5 * 60 * 1000, // 5 minutes
-      gcTime: 30 * 60 * 1000, // 30 minutes
-    },
-  },
-});
+import { Stack, usePathname } from 'expo-router';
+import { StyleSheet, View } from 'react-native';
+import { colors } from '../constants/theme';
+import { BottomNav } from '../components/BottomNav';
+import { SessionProvider } from '../store/sessions';
 
 export default function RootLayout() {
+  const pathname = usePathname();
+  const showBottomNav = pathname ? !/^\/session\/[^/]+\/scan$/.test(pathname) : true;
+
   return (
-    <SafeAreaProvider>
-      <QueryClientProvider client={queryClient}>
-        <Stack screenOptions={{ headerShown: false }}>
-          <Stack.Screen name="(auth)" />
-          <Stack.Screen name="(tabs)" />
-          <Stack.Screen name="session" />
-        </Stack>
-      </QueryClientProvider>
-    </SafeAreaProvider>
+    <SessionProvider>
+      <View style={styles.container}>
+        <View style={styles.stackWrap}>
+          <Stack screenOptions={{ headerShown: false }} />
+        </View>
+        {showBottomNav ? <BottomNav /> : null}
+      </View>
+    </SessionProvider>
   );
 }
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: colors.bg,
+  },
+  stackWrap: {
+    flex: 1,
+  },
+});
