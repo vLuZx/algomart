@@ -40,12 +40,3 @@ export function isValidBarcode(code: string): boolean {
   // Must be 12 or 13 digits
   return cleanCode.length === 12 || cleanCode.length === 13;
 }
-
-/**
- * Validate ASIN format
- * ASINs are 10 characters, alphanumeric
- */
-export function isValidAsin(asin: string): boolean {
-  const cleanAsin = asin.trim();
-  return /^[A-Z0-9]{10}$/i.test(cleanAsin);
-}

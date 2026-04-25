@@ -23,18 +23,7 @@ export function buildInitialSessionState() {
  * Build a SessionProduct from a scanner input. Enrichment fields sourced
  * from `/api/amazon/insights` (see services/product.service.ts) are used
  * when present; otherwise the field is left at a neutral default.
- *
- * TODO(backend): the following fields still have no server source because
- * SP-API does not expose them; they require additional APIs or scraping:
- *   - rating / reviewCount   (Amazon product reviews)
- *   - sellerPopularity(Score) / competitionLevel (derived metric)
- *   - estimatedShipping      (no dedicated SP-API endpoint)
- *   - monthlySalesEstimate   (third-party estimator)
- *   - requiresApproval / restrictions (Listings Restrictions API)
- *
- * `amazonFees` is now populated via POST /api/amazon/fees/estimate when
- * a lookup returns an Amazon listing price (see scan.tsx handleConfirm).
- */
+ **/
 export function createScannedProduct(
   sessionId: string,
   input: ScannedProductInput,
