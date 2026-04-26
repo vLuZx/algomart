@@ -1,9 +1,8 @@
 import type {
     SingleProductStatistics,
-    SellerOffer,
-    CompetitionAggregate,
     BestSellerRank,
 } from "./statistics.service.js";
+import { computeBuySignal } from "./buy-signal.service.js";
 
 type Dimensions = {
   l: number;
@@ -75,9 +74,6 @@ const DISPOSAL_FEE_PER_UNIT = {
     oversize: 1.45,
 } as const;
 
-/** Threshold (days) at which Amazon's long-term / aged-inventory surcharge kicks in. */
-const LONG_TERM_STORAGE_DAY_THRESHOLD = 180;
-
 export function calculateProductStatistics(
     input: SingleProductStatistics,
     options: CalculationOptions = {}
@@ -112,7 +108,7 @@ export function calculateProductStatistics(
         lowestPrice: input.lowestPrice?.amount || 0,
     });
 
-    // Profit \u2014 requires COGS. If caller didn't supply it, surface an
+    // Profit — requires COGS. If caller didn't supply it, surface an
     // explicit error rather than silently treating cost as $0.
     const profit = computeProfit({
         amazonPrice,
@@ -124,67 +120,101 @@ export function calculateProductStatistics(
         quantity,
     });
 
-    // BSR \u2192 sales velocity \u2192 days-to-sell \u2192 long-term-storage risk
+    // BSR → sales velocity → days-to-sell-quantity
     const salesEstimate = estimateMonthlySalesFromBsr(input.bsr);
-    const daysToSell =
+    const daysToSellQuantity =
         salesEstimate.unitsPerMonth && salesEstimate.unitsPerMonth > 0
             ? Math.round((quantity / salesEstimate.unitsPerMonth) * 30)
             : null;
-    const longTermStorageRisk =
-        daysToSell !== null && daysToSell > LONG_TERM_STORAGE_DAY_THRESHOLD;
 
-    const competitionAnalysis = analyzeCompetition(input);
+    // Naive Buy Box share estimate for the buy-signal model: if Amazon owns
+    // the box we capture 0; otherwise a new FBA entrant typically gets
+    // 1/(competitors + 1) of the share.
+    const aggregate = input.competition.aggregate;
+    const estimatedBuyBoxSharePct = aggregate.amazonIsBuyBoxWinner
+        ? 0
+        : Math.round((1 / (Math.max(1, aggregate.fbaSellerCount) + 1)) * 100);
+
+    const fullBuySignal = computeBuySignal({
+        amazonPrice,
+        costOfGoods: typeof options.costOfGoods === 'number' ? options.costOfGoods : null,
+        referralFee,
+        fulfillmentFee,
+        netProfitPerUnit: profit.netProfitPerUnit,
+        roi: profit.roi,
+        marginPercentage: profit.marginPercentage,
+        daysToSell: daysToSellQuantity,
+        bsrCategory: input.bsr?.category ?? null,
+        competition: input.competition,
+        flags: { isHazmat: input.flags.isHazmat },
+        weightLb: input.dimensions.weightLb,
+        estimatedBuyBoxSharePct,
+        inboundEligible: input.inboundEligibility.isEligible,
+    });
+
+    // Public response surface: drop internal-only fields the UI doesn't
+    // consume (tier/summary/disqualifiers/reasoning/return-adjustment).
+    // Those remain available on the buy-signal service for tests/internal use.
+    const {
+        tier: _tier,
+        summary: _summary,
+        hardDisqualifiers: _hardDisqualifiers,
+        primaryReasons: _primaryReasons,
+        wouldBecomeBuyIf: _wouldBecomeBuyIf,
+        returnAdjustment: _returnAdjustment,
+        ...buySignal
+    } = fullBuySignal;
 
     return {
         metadata: {
             asin: input.asin,
-            marketplaceId: input.marketplaceId,
             title: input.title || 'Unknown Product',
+            category: input.bsr?.category || 'Unknown',
             image: input.image || '',
         },
-        calculatedValues: {
+        computed: {
             amazonPrice,
-            costOfGoodsPerUnit: typeof options.costOfGoods === 'number' ? options.costOfGoods : null,
-            // Distinct fee line items \u2014 mirrors Amazon's FBA Revenue Calculator.
+            costOfGoodsPerUnit:
+                typeof options.costOfGoods === 'number' ? options.costOfGoods : null,
             referralFee: round2(referralFee),
-            fullfillmentByAmazonFee: input.fulfillmentFee.amount,
-            fulfillmentFeeSource: input.fulfillmentFee.source,
-            inboundPlacementFeePerUnit: round2(inboundPlacementFeePerUnit),
-            shippingToAmazonFeePerUnit: shippingToAmazonPerUnit,
-            storageFee: round2(storageFeeMonthly),
+            fbaFee: round2(fulfillmentFee),
+            inboundFee: round2(inboundPlacementFeePerUnit),
+            shippingFee: shippingToAmazonPerUnit,
+            monthlyStorageFee: round2(storageFeeMonthly),
             removalFeePerUnit,
             disposalFeePerUnit,
-            // Profit block \u2014 may carry an error when COGS is missing.
-            profit,
-        },
-        fetchedValues: {
-            sellerPopularity: input.seller.popularity || 0,
-            bsr: {
-                rank: input.bsr?.rank || 0,
-                category: input.bsr?.category || 'Unknown',
-                link: input.bsr?.link || '',
+            profit: {
+                netProfitPerUnit: profit.netProfitPerUnit,
+                netProfitTotal: profit.netProfitTotal,
+                roi: profit.roi,
+                marginPercentage: profit.marginPercentage,
+                totalFeesPerUnit: profit.totalFeesPerUnit,
+                ...(profit.error ? { error: profit.error, message: profit.message } : {}),
             },
+        },
+        buySignal,
+        fetched: {
+            sellerPopularity: input.seller.popularity || 0,
+            bsr: input.bsr?.rank || 0,
             dimensions: {
-                lengthIn: input.dimensions.lengthIn || 0,
-                widthIn: input.dimensions.widthIn || 0,
-                heightIn: input.dimensions.heightIn || 0,
-                weightLb: input.dimensions.weightLb || 0,
+                weight: input.dimensions.weightLb || 0,
+                length: input.dimensions.lengthIn || 0,
+                width: input.dimensions.widthIn || 0,
+                height: input.dimensions.heightIn || 0,
             },
             inboundEligibility: {
-                isEligible: /*input.inboundEligibility.isEligible*/ true, // TODO: re-enable once SP-API is stable
-                reasons: /*input.inboundEligibility.reasons*/ [], // TODO: re-enable once SP-API is stable
+                isEligible: input.inboundEligibility.isEligible,
+                reasons: input.inboundEligibility.reasons,
             },
-            competition: competitionAnalysis,
+            competition: {
+                totalSellerCount: aggregate.totalSellerCount,
+                fbaSellerCount: aggregate.fbaSellerCount,
+                fbmSellerCount: aggregate.fbmSellerCount,
+            },
             salesEstimate: {
-                ...salesEstimate,
-                daysToSell,
-                longTermStorageRisk,
-                longTermStorageThresholdDays: LONG_TERM_STORAGE_DAY_THRESHOLD,
-            },
-            storageFeeSeasonal: {
-                activeSeason: input.storageFee.season,
-                ratesPerCubicFoot: input.storageFee.seasonalRates,
-                monthlyFees: input.storageFee.seasonalMonthlyFees,
+                unitsPerMonth: salesEstimate.unitsPerMonth,
+                confidence: salesEstimate.confidence,
+                daysToSellQuantity,
             },
         },
     };
@@ -373,210 +403,6 @@ function estimateMonthlySalesFromBsr(bsr: BestSellerRank | null): {
     else confidence = 'low';
 
     return { unitsPerMonth, confidence, table: tableName };
-}
-
-// --------------------------------------------------------------------------------------------------
-// @section:competition
-// --------------------------------------------------------------------------------------------------
-
-export type ScoredSeller = {
-    sellerId: string | null;
-    isAmazon: boolean;
-    isAmazonOwned: boolean;
-    amazonSellerType: SellerOffer['amazonSellerType'];
-    isFulfilledByAmazon: boolean;
-    isBuyBoxWinner: boolean;
-    isPrimeEligible: boolean;
-    landedPrice: number | null;
-    feedbackRating: number | null;
-    feedbackCount: number | null;
-    /** 0-100 threat score for THIS seller relative to the listing. */
-    threatScore: number;
-};
-
-export type CompetitionVerdict = 'BUY' | 'CAUTION' | 'AVOID';
-
-export type Recommendation = {
-    verdict: CompetitionVerdict;
-    competitionScore: number;
-    primaryConcerns: string[];
-    opportunities: string[];
-    /** Suggested entry price to undercut current Buy Box (5% below). Null if no buy box. */
-    suggestedEntryPrice: number | null;
-    /** Naive expected Buy Box share for a new FBA seller, as 0-100. */
-    estimatedBuyBoxShare: number;
-};
-
-export type CompetitionAnalysis = {
-    aggregate: CompetitionAggregate;
-    sellers: ScoredSeller[];
-    /** 0-100 difficulty score for the listing as a whole. */
-    competitionScore: number;
-    difficultyTier: 'low' | 'moderate' | 'high' | 'avoid';
-    recommendation: Recommendation;
-};
-
-/**
- * Threat-score weights. Centralized so they're easy to tune without
- * hunting through the function body.
- */
-const THREAT_WEIGHTS = {
-    amazonAuto: 100,        // Amazon Retail (1P) -> full 100, short-circuits
-    amazonOwnedAuto: 60,    // AWD / Amazon Resale -> moderate floor; condition-limited
-    buyBoxWinner: 30,
-    fbaFulfillment: 20,
-    strongFeedback: 15,     // rating >= 4.5 (i.e. >=90% positive) AND >=1000 reviews
-    nearBuyBoxPrice: 20,    // landed price within 5% of buy-box landed price
-    primeEligible: 15,
-} as const;
-
-/** Score a single seller 0-100 based on how threatening they are on this listing. */
-function calculateThreatScore(
-    seller: SellerOffer,
-    buyBoxLandedPrice: number | null
-): number {
-    // Amazon Retail dominates the buy box outright \u2014 max threat.
-    if (seller.isAmazon) return THREAT_WEIGHTS.amazonAuto;
-
-    // AWD / Amazon Resale carry the Amazon halo but only on used/open-box
-    // inventory, so they suppress NEW-condition sellers' margins without
-    // fully owning the buy box. Treat as a moderate floor that other
-    // signals can still push higher.
-    let score = 0;
-    if (seller.isAmazonOwned) score = THREAT_WEIGHTS.amazonOwnedAuto;
-
-    if (seller.isBuyBoxWinner) score += THREAT_WEIGHTS.buyBoxWinner;
-    if (seller.isFulfilledByAmazon) score += THREAT_WEIGHTS.fbaFulfillment;
-
-    const ratingPercent = seller.feedbackRating ?? 0; // SP-API reports 0-100
-    const ratingCount = seller.feedbackCount ?? 0;
-    if (ratingPercent >= 90 && ratingCount >= 1000) score += THREAT_WEIGHTS.strongFeedback;
-
-    const landed = seller.landedPrice?.amount ?? null;
-    if (landed !== null && buyBoxLandedPrice && buyBoxLandedPrice > 0) {
-        const delta = Math.abs(landed - buyBoxLandedPrice) / buyBoxLandedPrice;
-        if (delta <= 0.05) score += THREAT_WEIGHTS.nearBuyBoxPrice;
-    }
-
-    if (seller.isPrimeEligible) score += THREAT_WEIGHTS.primeEligible;
-
-    return Math.min(100, score);
-}
-
-/** Map a 0-100 competition score to a coarse difficulty tier. */
-function difficultyTierFor(score: number): CompetitionAnalysis['difficultyTier'] {
-    if (score <= 30) return 'low';
-    if (score <= 60) return 'moderate';
-    if (score <= 85) return 'high';
-    return 'avoid';
-}
-
-/**
- * Builds the verdict + reasoning. Mirrors the decision rules in the spec:
- *   - AVOID if Amazon is selling AND winning Buy Box
- *   - AVOID if more than 10 FBA sellers
- *   - CAUTION if 5-10 FBA sellers
- *   - CAUTION if competition score >= 70 (proxy for "dominant seller")
- *   - else BUY
- */
-function buildRecommendation(
-    aggregate: CompetitionAggregate,
-    competitionScore: number,
-    sellers: ReadonlyArray<SellerOffer>
-): Recommendation {
-    const concerns: string[] = [];
-    const opportunities: string[] = [];
-
-    if (aggregate.amazonIsSelling) concerns.push('Amazon is selling on this listing');
-    if (aggregate.amazonIsBuyBoxWinner) concerns.push('Amazon currently owns the Buy Box');
-    const awdPresent = sellers.some(
-        (s) => s.amazonSellerType === 'amazon-warehouse-deals' || s.amazonSellerType === 'amazon-resale'
-    );
-    if (awdPresent) concerns.push('Amazon Warehouse Deals is selling used/open-box inventory');
-    if (aggregate.fbaSellerCount > 10) concerns.push(`${aggregate.fbaSellerCount} FBA sellers compete here`);
-    else if (aggregate.fbaSellerCount >= 5) concerns.push(`${aggregate.fbaSellerCount} FBA sellers (moderate saturation)`);
-    if ((aggregate.priceSpread ?? 0) > 0 && aggregate.lowestFbaPrice && aggregate.buyBoxPrice) {
-        const undercut = aggregate.buyBoxPrice.amount - aggregate.lowestFbaPrice.amount;
-        if (undercut > 0.5) concerns.push('Lowest FBA offer materially undercuts the Buy Box');
-    }
-
-    if (!aggregate.amazonIsSelling) opportunities.push('Amazon is not selling this listing');
-    if (aggregate.fbaSellerCount <= 3) opportunities.push('Few FBA competitors');
-    if (aggregate.fbmSellerCount > aggregate.fbaSellerCount) opportunities.push('FBM-heavy listing — FBA Prime advantage available');
-    if (aggregate.totalSellerCount === 0) opportunities.push('No active offers — open listing');
-
-    let verdict: CompetitionVerdict;
-    if (aggregate.amazonIsSelling && aggregate.amazonIsBuyBoxWinner) verdict = 'AVOID';
-    else if (aggregate.fbaSellerCount > 10) verdict = 'AVOID';
-    else if (competitionScore >= 70) verdict = 'CAUTION';
-    else if (aggregate.fbaSellerCount >= 5) verdict = 'CAUTION';
-    else verdict = 'BUY';
-
-    const buyBoxAmount = aggregate.buyBoxPrice?.amount ?? null;
-    const suggestedEntryPrice =
-        buyBoxAmount !== null ? Math.round(buyBoxAmount * 0.95 * 100) / 100 : null;
-
-    // Naive Buy Box share estimate: split among FBA sellers when Amazon
-    // isn't dominant. New entrants typically capture 1/(FBA count + 1).
-    let estimatedBuyBoxShare: number;
-    if (aggregate.amazonIsBuyBoxWinner) {
-        estimatedBuyBoxShare = 0;
-    } else {
-        const competingFba = Math.max(1, aggregate.fbaSellerCount);
-        estimatedBuyBoxShare = Math.round((1 / (competingFba + 1)) * 100);
-    }
-
-    return {
-        verdict,
-        competitionScore,
-        primaryConcerns: concerns,
-        opportunities,
-        suggestedEntryPrice,
-        estimatedBuyBoxShare,
-    };
-}
-
-/**
- * Top-level competition analyzer. Consumes the data already gathered by
- * statistics.service and produces threat scores + a recommendation.
- *
- * Listing-level competition score is the higher of:
- *   - the max per-seller threat score (worst single competitor), and
- *   - the saturation pressure (capped FBA-seller count * 8).
- * This way an over-saturated listing scores high even if no single seller
- * is individually dominant.
- */
-function analyzeCompetition(input: SingleProductStatistics): CompetitionAnalysis {
-    const { aggregate, sellers } = input.competition;
-    const buyBoxLanded = aggregate.buyBoxPrice?.amount ?? null;
-
-    const scoredSellers: ScoredSeller[] = sellers.map((s) => ({
-        sellerId: s.sellerId,
-        isAmazon: s.isAmazon,
-        isAmazonOwned: s.isAmazonOwned,
-        amazonSellerType: s.amazonSellerType,
-        isFulfilledByAmazon: s.isFulfilledByAmazon,
-        isBuyBoxWinner: s.isBuyBoxWinner,
-        isPrimeEligible: s.isPrimeEligible,
-        landedPrice: s.landedPrice?.amount ?? null,
-        feedbackRating: s.feedbackRating,
-        feedbackCount: s.feedbackCount,
-        threatScore: calculateThreatScore(s, buyBoxLanded),
-    }));
-
-    const maxThreat = scoredSellers.reduce((m, s) => Math.max(m, s.threatScore), 0);
-    const saturationPressure = Math.min(100, aggregate.fbaSellerCount * 8);
-    const competitionScore = Math.max(maxThreat, saturationPressure);
-
-    const recommendation = buildRecommendation(aggregate, competitionScore, sellers);
-
-    return {
-        aggregate,
-        sellers: scoredSellers,
-        competitionScore,
-        difficultyTier: difficultyTierFor(competitionScore),
-        recommendation,
-    };
 }
 
 // --------------------------------------------------------------------------------------------------

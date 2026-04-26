@@ -170,24 +170,24 @@ describe('B006IB5T4W \u2014 calculation parity with FBA Revenue Calculator', () 
         // Our app additionally subtracts inbound placement + shipping-to-FC, which
         // the calculator does NOT include by default. So we recompose the
         // calculator-equivalent figure and check parity on that basis.
-        const cv = calc.calculatedValues;
+        const cv = calc.computed;
         const calculatorEquivalent =
-            cv.amazonPrice - cv.referralFee - (cv.fullfillmentByAmazonFee ?? 0) - COGS;
+            cv.amazonPrice - cv.referralFee - (cv.fbaFee ?? 0) - COGS;
 
-        expect(calc.calculatedValues.profit.error).toBeNull();
+        expect(calc.computed.profit.error).toBeUndefined();
         expect(Math.abs(calculatorEquivalent - AMAZON_NET_PROFIT_PER_UNIT)).toBeLessThanOrEqual(TOLERANCE);
         // Our app's bottom-line profit is naturally lower because it includes
         // inbound + shipping; ROI should still be positive on this listing.
-        expect(calc.calculatedValues.profit.roi).toBeGreaterThan(0);
+        expect(calc.computed.profit.roi).toBeGreaterThan(0);
     });
 
     it('returns COGS_REQUIRED error when costOfGoods is omitted', async () => {
         const stats = await getSingleProductStatistics({ asin: 'B006IB5T4W' });
         const calc = calculateProductStatistics(stats);
 
-        expect(calc.calculatedValues.profit.error).toBe('COGS_REQUIRED');
-        expect(calc.calculatedValues.profit.netProfitPerUnit).toBeNull();
-        expect(calc.calculatedValues.profit.roi).toBeNull();
+        expect(calc.computed.profit.error).toBe('COGS_REQUIRED');
+        expect(calc.computed.profit.netProfitPerUnit).toBeNull();
+        expect(calc.computed.profit.roi).toBeNull();
     });
 
     it('flags Amazon Warehouse Deals as amazon-owned but not amazon-retail', async () => {
@@ -216,13 +216,11 @@ describe('B006IB5T4W \u2014 calculation parity with FBA Revenue Calculator', () 
             { costOfGoods: COGS }
         );
 
-        const sales = calc.fetchedValues.salesEstimate;
+        const sales = calc.fetched.salesEstimate;
         expect(sales.unitsPerMonth).toBeGreaterThan(0);
         // BSR=18 in Beauty sells very fast — 100 units rounds to 0 days. Just
         // assert the field is a non-negative number, not strictly positive.
-        expect(sales.daysToSell).not.toBeNull();
-        expect(sales.daysToSell).toBeGreaterThanOrEqual(0);
-        expect(typeof sales.longTermStorageRisk).toBe('boolean');
-        expect(sales.longTermStorageThresholdDays).toBe(180);
+        expect(sales.daysToSellQuantity).not.toBeNull();
+        expect(sales.daysToSellQuantity).toBeGreaterThanOrEqual(0);
     });
 });
