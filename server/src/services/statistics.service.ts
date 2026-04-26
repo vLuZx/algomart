@@ -20,6 +20,9 @@ import amazonFeesService from './amazon/fees.service.js';
 import amazonEligibilityService, {
 	type InboundEligibilityResult,
 } from './amazon/eligibility.service.js';
+import amazonRestrictionsService, {
+	type ListingRestrictionsResult,
+} from './amazon/restrictions.service.js';
 import amazonClient from './amazon/client.service.js';
 
 // ─────────────────────────────────────────────────────────────────────
@@ -208,6 +211,8 @@ export type SingleProductStatistics = {
 	storageFee: StorageFeeEstimate;
 	/** FBA INBOUND eligibility for this ASIN, with translated reason codes. */
 	inboundEligibility: InboundEligibilityResult;
+	/** Listings Restrictions for this seller/ASIN (approval-required check). */
+	listingRestrictions: ListingRestrictionsResult;
 	/** Per-seller offers + listing-level aggregate metrics. */
 	competition: CompetitionData;
 };
@@ -275,7 +280,7 @@ export async function getSingleProductStatistics(
 	//    they're distinct line items in Amazon's calculator, and conflating
 	//    them was the source of a profit miscalculation bug.
 	const priceForFee = buyBoxPrice ?? lowestPrice;
-	const [feesResult, inboundEligibility] = await Promise.all([
+	const [feesResult, inboundEligibility, listingRestrictions] = await Promise.all([
 		resolveCombinedFees({
 			asin,
 			marketplaceId,
@@ -284,6 +289,7 @@ export async function getSingleProductStatistics(
 			dimensions,
 		}),
 		amazonEligibilityService.getInboundEligibility(asin, marketplaceId, 'INBOUND'),
+		amazonRestrictionsService.getRestrictions(asin, { marketplaceId }),
 	]);
 	const { categoryFee, fulfillmentFee } = feesResult;
 	const storageFee = estimateMonthlyStorageFee(dimensions);
@@ -309,6 +315,7 @@ export async function getSingleProductStatistics(
 		fulfillmentFee,
 		storageFee,
 		inboundEligibility,
+		listingRestrictions,
 		competition,
 	};
 }

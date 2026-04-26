@@ -22,12 +22,12 @@ import {
   ScanBarcode,
 } from 'lucide-react-native';
 import { colors, font, radius, shadows } from '../../../../constants/theme';
+import { SALES_TAX } from '../../../../constants/config';
 import { ImageWithFallback } from '../../../../components/ImageWithFallback';
 import { BuySignalCard } from '../../../../components/BuySignalCard';
-import { ProfitOutlookCard } from '../../../../components/ProfitOutlookCard';
 import { useSessions } from '../../../../store/sessions';
 import { fetchProductCalculation } from '../../../../services/product.service';
-import type { ProductCalculation } from '../../../../types/api';
+import type { ProductCalculation, ProductCalculationFull } from '../../../../types/api';
 import type { CompetitionLevel, SellerPopularity } from '../../../../types/product';
 
 const popularityCfg: Record<SellerPopularity, { color: string; bg: string; border: string }> = {
@@ -66,7 +66,7 @@ function formatInches(value: number): string {
   return `${value.toFixed(1)}"`;
 }
 
-function formatDimensions(d: ProductCalculation['fetched']['dimensions']): string {
+function formatDimensions(d: ProductCalculationFull['fetched']['dimensions']): string {
   if (!d.length && !d.width && !d.height) return '—';
   return `${formatInches(d.length)} × ${formatInches(d.width)} × ${formatInches(d.height)}`;
 }
@@ -97,7 +97,7 @@ export default function ProductDetailScreen() {
   const { getProduct } = useSessions();
   const product = sessionId && productId ? getProduct(sessionId, productId) : undefined;
 
-  const [calculation, setCalculation] = useState<ProductCalculation | null>(null);
+  const [calculation, setCalculation] = useState<ProductCalculationFull | null>(null);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -118,7 +118,12 @@ export default function ProductDetailScreen() {
       estimatedQuantity: product.estimatedQuantity,
     })
       .then((data) => {
-        if (!cancelled) setCalculation(data);
+        if (cancelled) return;
+        if ('approvalRequired' in data && data.approvalRequired) {
+          setErrorMessage('Amazon requires approval to list this product.');
+          return;
+        }
+        setCalculation(data as ProductCalculationFull);
       })
       .catch((err: unknown) => {
         if (!cancelled) {
@@ -190,6 +195,19 @@ export default function ProductDetailScreen() {
 
   const inboundOk = fetched.inboundEligibility.isEligible;
   const restrictions = fetched.inboundEligibility.reasons;
+
+  // Estimated stock metrics
+  const totalProfit =
+    profit.netProfitTotal !== null
+      ? profit.netProfitTotal
+      : profit.netProfitPerUnit !== null
+        ? profit.netProfitPerUnit * product.estimatedQuantity
+        : null;
+  const totalCostAfterTax = product.foundPrice * product.estimatedQuantity * (1 + SALES_TAX);
+  const salesPerDay =
+    fetched.salesEstimate.unitsPerMonth !== null
+      ? fetched.salesEstimate.unitsPerMonth / 30
+      : null;
 
   return (
     <SafeAreaView style={styles.container}>
@@ -272,10 +290,7 @@ export default function ProductDetailScreen() {
           }}
         />
 
-        {/* 3. Profit Outlook */}
-        <ProfitOutlookCard />
-
-        {/* 4. Profit Analysis */}
+        {/* 3. Profit Analysis - Per Unit */}
         <View style={styles.accentCard}>
           <View style={styles.accentLine} />
           <View style={styles.accentCardBody}>
@@ -283,7 +298,7 @@ export default function ProductDetailScreen() {
               <View style={styles.sectionIconWrap}>
                 <DollarSign size={14} color={colors.accent} strokeWidth={2} />
               </View>
-              <Text style={styles.sectionTitle}>Profit Analysis</Text>
+              <Text style={styles.sectionTitle}>Profit Analysis - Per Unit</Text>
             </View>
 
             <Text style={styles.subSectionLabel}>COST BREAKDOWN</Text>
@@ -333,6 +348,50 @@ export default function ProductDetailScreen() {
             {profit.error ? (
               <Text style={styles.profitErrorText}>{profit.message ?? profit.error}</Text>
             ) : null}
+          </View>
+        </View>
+
+        {/* 4. Profit Analysis - Estimated Stock */}
+        <View style={styles.accentCard}>
+          <View style={styles.accentLine} />
+          <View style={styles.accentCardBody}>
+            <View style={styles.sectionTitleRow}>
+              <View style={styles.sectionIconWrap}>
+                <Package size={14} color={colors.accent} strokeWidth={2} />
+              </View>
+              <Text style={styles.sectionTitle}>Profit Analysis - Estimated Stock</Text>
+            </View>
+
+            <Text style={styles.subSectionLabel}>STOCK OUTLOOK ({product.estimatedQuantity} units)</Text>
+            <View style={styles.twoColumnGrid}>
+              <View style={styles.metricTile}>
+                <Text style={styles.metricTileLabel}>Total Profit</Text>
+                <Text style={[styles.metricTileValue, { color: profitC }]}>
+                  {totalProfit !== null
+                    ? `${totalProfit >= 0 ? '+' : '-'}$${Math.abs(totalProfit).toFixed(2)}`
+                    : '—'}
+                </Text>
+              </View>
+              <View style={styles.metricTile}>
+                <Text style={styles.metricTileLabel}>Cost After Tax</Text>
+                <Text style={styles.metricTileValue}>${totalCostAfterTax.toFixed(2)}</Text>
+                <Text style={styles.metricTileSub}>incl. {(SALES_TAX * 100).toFixed(0)}% tax</Text>
+              </View>
+              <View style={styles.metricTile}>
+                <Text style={styles.metricTileLabel}>Time to Sell</Text>
+                <Text style={styles.metricTileValue}>
+                  {fetched.salesEstimate.daysToSellQuantity !== null
+                    ? `${fetched.salesEstimate.daysToSellQuantity} days`
+                    : '—'}
+                </Text>
+              </View>
+              <View style={styles.metricTile}>
+                <Text style={styles.metricTileLabel}>Est. Sales / Day</Text>
+                <Text style={styles.metricTileValue}>
+                  {salesPerDay !== null ? `~${salesPerDay.toFixed(1)}` : '—'}
+                </Text>
+              </View>
+            </View>
           </View>
         </View>
 

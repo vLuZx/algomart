@@ -66,6 +66,9 @@ class AmazonClientService {
 			credentials: awsCredentials,
 		});
 
+		const startedAt = Date.now();
+		this.logRequest(method, url, requestBody);
+
 		try {
 			const response = await this.httpClient.request<T>({
 				method,
@@ -75,8 +78,10 @@ class AmazonClientService {
 				timeout: config.timeout || this.defaultTimeoutMs,
 			});
 
+			this.logResponse(method, url, response.status, response.data, Date.now() - startedAt);
 			return response.data;
 		} catch (error: unknown) {
+			this.logErrorResponse(method, url, error, Date.now() - startedAt);
 			this.throwFormattedAmazonError(error, url);
 		}
 	}
@@ -254,6 +259,56 @@ class AmazonClientService {
 		) as { headers: AmazonRequestHeaders };
 
 		return signedRequest.headers;
+	}
+
+	private logRequest(method: string, url: URL, body: string | undefined): void {
+		// eslint-disable-next-line no-console
+		console.log(
+			`\n[SP-API →] ${method} ${url.pathname}${url.search}` +
+				(body ? `\n  body: ${body}` : ''),
+		);
+	}
+
+	private logResponse(
+		method: string,
+		url: URL,
+		status: number,
+		data: unknown,
+		durationMs: number,
+	): void {
+		// eslint-disable-next-line no-console
+		console.log(
+			`[SP-API ←] ${method} ${url.pathname} ${status} (${durationMs}ms)\n` +
+				this.stringifyForLog(data),
+		);
+	}
+
+	private logErrorResponse(
+		method: string,
+		url: URL,
+		error: unknown,
+		durationMs: number,
+	): void {
+		const status = this.isAxiosErrorWithResponse(error) ? error.response.status : 'ERR';
+		const data = this.isAxiosErrorWithResponse(error)
+			? error.response.data
+			: error instanceof Error
+				? error.message
+				: String(error);
+		// eslint-disable-next-line no-console
+		console.log(
+			`[SP-API ✕] ${method} ${url.pathname} ${status} (${durationMs}ms)\n` +
+				this.stringifyForLog(data),
+		);
+	}
+
+	private stringifyForLog(data: unknown): string {
+		try {
+			const json = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+			return json.length > 4000 ? `${json.slice(0, 4000)}\n…[truncated ${json.length - 4000} chars]` : json;
+		} catch {
+			return String(data);
+		}
 	}
 
 	private throwFormattedAmazonError(error: unknown, url: URL): never {

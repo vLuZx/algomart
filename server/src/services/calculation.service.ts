@@ -78,6 +78,13 @@ export function calculateProductStatistics(
     input: SingleProductStatistics,
     options: CalculationOptions = {}
 ): any {
+    // Short-circuit: if Amazon requires approval to list this ASIN, there's
+    // no point running the full profit/buy-signal pipeline. The frontend
+    // uses this flag to discard the product immediately.
+    if (input.listingRestrictions.requiresApproval) {
+        return { approvalRequired: true };
+    }
+
     const quantity = Math.max(1, input.estimatedQuantity || 1);
 
     const shippingEstimate = estimateUSPSShippingCost({
@@ -205,6 +212,15 @@ export function calculateProductStatistics(
             inboundEligibility: {
                 isEligible: input.inboundEligibility.isEligible,
                 reasons: input.inboundEligibility.reasons,
+            },
+            listingRestrictions: {
+                canList: input.listingRestrictions.canList,
+                requiresApproval: input.listingRestrictions.requiresApproval,
+                conditionType: input.listingRestrictions.conditionType,
+                restrictions: input.listingRestrictions.restrictions,
+                ...(input.listingRestrictions.error
+                    ? { error: input.listingRestrictions.error }
+                    : {}),
             },
             competition: {
                 totalSellerCount: aggregate.totalSellerCount,

@@ -26,10 +26,14 @@ import {
 import { ChevronLeft, DollarSign, Package, ScanLine, X } from 'lucide-react-native';
 import { GradientButton } from '../../../components/GradientButton';
 import { colors, font, radius, shadows } from '../../../constants/theme';
-import { lookupByBarcode } from '../../../services/product.service';
+import { fetchProductCalculation } from '../../../services/product.service';
 import { useSessions } from '../../../store/sessions';
-import type { ProductLookupResult } from '../../../types/api';
-import type { ScannedProductInput } from '../../../types/product';
+import type { ProductCalculation, ProductCalculationFull } from '../../../types/api';
+import type {
+  CompetitionLevel,
+  ScannedProductInput,
+  SellerPopularity,
+} from '../../../types/product';
 
 const BARCODE_TYPES: ScannedObjectType[] = [
   'ean-13',
@@ -47,33 +51,75 @@ function getRouteParam(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value;
 }
 
+function popularityFromScore(score: number): SellerPopularity {
+  if (score >= 5000) return 'Very High';
+  if (score >= 1000) return 'High';
+  if (score >= 200) return 'Medium';
+  return 'Low';
+}
+
+function competitionFromSellerCount(total: number): CompetitionLevel {
+  if (total >= 20) return 'Very High';
+  if (total >= 10) return 'High';
+  if (total >= 4) return 'Medium';
+  return 'Low';
+}
+
+function formatInches(value: number): string {
+  return `${value.toFixed(1)}\"`;
+}
+
+function formatDimensions(d: ProductCalculationFull['fetched']['dimensions']): string {
+  if (!d.length && !d.width && !d.height) return '';
+  return `${formatInches(d.length)} × ${formatInches(d.width)} × ${formatInches(d.height)}`;
+}
+
+function formatWeight(weightLb: number): string {
+  if (!weightLb) return '';
+  const wholeLbs = Math.floor(weightLb);
+  const remainderOz = (weightLb - wholeLbs) * 16;
+  if (wholeLbs === 0) return `${remainderOz.toFixed(1)} oz`;
+  if (remainderOz < 0.05) return `${wholeLbs} lbs`;
+  return `${wholeLbs} lbs ${remainderOz.toFixed(1)} oz`;
+}
+
+/**
+ * Map the calculation response onto the SessionProduct shape the local
+ * store expects. The /api/calculations/product endpoint is the ONLY
+ * backend call the app makes per product, so everything we need is
+ * derived from this single payload.
+ */
 function buildScannedInput(
-  lookup: ProductLookupResult,
+  calc: ProductCalculationFull,
   foundPrice: number,
   estimatedQuantity: number,
   scan: { barcode: string; barcodeType: string },
 ): ScannedProductInput {
-  // All enrichment (including amazonFees) comes from the single
-  // /api/amazon/insights call in lookupByBarcode. Fields SP-API does not
-  // expose (rating, sellerPopularity, competitionLevel, etc.) stay at
-  // neutral defaults until new APIs back them.
+  const fetched = calc.fetched;
+  const computed = calc.computed;
   return {
-    asin: lookup.asin,
-    title: lookup.title ?? lookup.brand ?? 'Unknown Product',
-    image: lookup.image ?? '',
+    asin: calc.metadata.asin,
+    title: calc.metadata.title || 'Unknown Product',
+    image: calc.metadata.image || '',
     rating: 0,
-    category: lookup.category ?? '',
-    price: lookup.price ?? foundPrice,
-    sellerPopularity: 'Medium',
+    category: calc.metadata.category || '',
+    price: computed.amazonPrice,
+    sellerPopularity: popularityFromScore(fetched.sellerPopularity),
+    sellerPopularityScore: fetched.sellerPopularity,
     foundPrice,
     estimatedQuantity,
     barcode: scan.barcode,
     barcodeType: scan.barcodeType,
-    ...(lookup.dimensions ? { dimensions: lookup.dimensions } : {}),
-    ...(lookup.weight ? { weight: lookup.weight } : {}),
-    ...(lookup.salesRank !== null ? { salesRank: lookup.salesRank } : {}),
-    ...(lookup.bsr ? { bsr: lookup.bsr.rank } : {}),
-    ...(typeof lookup.amazonFees === 'number' ? { amazonFees: lookup.amazonFees } : {}),
+    estimatedShipping: computed.shippingFee,
+    amazonFees: computed.referralFee + computed.fbaFee,
+    profitMargin: computed.profit.netProfitPerUnit ?? 0,
+    requiresApproval: !fetched.inboundEligibility.isEligible,
+    competitionLevel: competitionFromSellerCount(fetched.competition.totalSellerCount),
+    bsr: fetched.bsr,
+    dimensions: formatDimensions(fetched.dimensions),
+    weight: formatWeight(fetched.dimensions.weight),
+    restrictions: fetched.inboundEligibility.reasons,
+    monthlySalesEstimate: fetched.salesEstimate.unitsPerMonth ?? 0,
   };
 }
 
@@ -86,26 +132,16 @@ export default function ScanScreen() {
   const { hasPermission, requestPermission } = useCameraPermission();
   const device = useCameraDevice('back');
 
-  const [isLookingUp, setIsLookingUp] = useState(false);
   const [isConfirming, setIsConfirming] = useState(false);
-  const [lookupResult, setLookupResult] = useState<ProductLookupResult | null>(null);
   const [scannedCode, setScannedCode] = useState<{ barcode: string; barcodeType: string } | null>(null);
   const [foundPriceText, setFoundPriceText] = useState('');
   const [estimatedQuantityText, setEstimatedQuantityText] = useState('1');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const lastBarcodeRef = useRef<string | null>(null);
-  const inFlightRef = useRef(false);
-  /**
-   * Cache successful lookups for the lifetime of this scan screen so that
-   * repeatedly scanning the same barcode (the camera fires the callback
-   * many times per second) does NOT re-hit the API. Errors intentionally
-   * are NOT cached so the user can retry a transient failure.
-   */
-  const lookupCacheRef = useRef<Map<string, ProductLookupResult>>(new Map());
-  /** Cooldown window after a successful scan during which the same
-   * barcode is silently ignored, preventing rapid-fire duplicates from
-   * the camera even after the modal closes. */
+  /** Cooldown after surfacing the modal so the camera — which fires the
+   * scan callback many times per second — can't keep re-opening the sheet
+   * for the same code. */
   const scanCooldownRef = useRef<{ barcode: string; until: number } | null>(null);
   const SCAN_COOLDOWN_MS = 3000;
 
@@ -118,71 +154,41 @@ export default function ScanScreen() {
 
   const resetScan = useCallback(() => {
     lastBarcodeRef.current = null;
-    inFlightRef.current = false;
-    // Clear cooldown so a user-initiated Retry can immediately rescan
-    // the same code that just failed.
     scanCooldownRef.current = null;
-    setLookupResult(null);
     setScannedCode(null);
     setFoundPriceText('');
     setEstimatedQuantityText('1');
     setErrorMessage(null);
-    setIsLookingUp(false);
     setIsConfirming(false);
   }, []);
 
-  const handleBarcode = useCallback(async (raw: string, barcodeType: ScannedObjectType) => {
+  const handleBarcode = useCallback((raw: string, barcodeType: ScannedObjectType) => {
     const barcode = raw.trim();
-    if (!barcode || inFlightRef.current) return;
+    if (!barcode) return;
     if (lastBarcodeRef.current === barcode) return;
 
-    // Suppress repeats within the cooldown window (camera spams the same
-    // barcode many times per second).
     const cooldown = scanCooldownRef.current;
     if (cooldown && cooldown.barcode === barcode && Date.now() < cooldown.until) {
       return;
     }
 
     lastBarcodeRef.current = barcode;
-    inFlightRef.current = true;
-    setIsLookingUp(true);
+    scanCooldownRef.current = { barcode, until: Date.now() + SCAN_COOLDOWN_MS };
+    setScannedCode({ barcode, barcodeType });
     setErrorMessage(null);
-
-    try {
-      // Reuse cached lookups instead of re-hitting the API for a barcode
-      // we've already resolved on this screen.
-      const cached = lookupCacheRef.current.get(barcode);
-      const result = cached ?? (await lookupByBarcode(barcode));
-      if (!cached) lookupCacheRef.current.set(barcode, result);
-
-      scanCooldownRef.current = { barcode, until: Date.now() + SCAN_COOLDOWN_MS };
-      setScannedCode({ barcode, barcodeType });
-      setLookupResult(result);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Product lookup failed.';
-      setErrorMessage(message);
-      // Hold the cooldown for failed lookups too so the camera doesn't
-      // spam the API with retries while the user is still pointed at the
-      // same (unresolvable) barcode. The user can press Retry, which calls
-      // resetScan() and clears the cooldown.
-      scanCooldownRef.current = { barcode, until: Date.now() + SCAN_COOLDOWN_MS };
-    } finally {
-      inFlightRef.current = false;
-      setIsLookingUp(false);
-    }
   }, []);
 
   const onObjectsScanned = useCallback(
     (objects: ScannedObject[]) => {
-      if (inFlightRef.current || lookupResult) return;
+      if (scannedCode) return;
       for (const object of objects) {
         if (isScannedCode(object) && object.value) {
-          void handleBarcode(object.value, object.type);
+          handleBarcode(object.value, object.type);
           return;
         }
       }
     },
-    [handleBarcode, lookupResult],
+    [handleBarcode, scannedCode],
   );
 
   const objectOutput = useObjectOutput({
@@ -204,19 +210,33 @@ export default function ScanScreen() {
     return Number.isFinite(value) && value > 0 ? value : null;
   }, [estimatedQuantityText]);
 
-  const handleConfirm = useCallback(() => {
-    if (!sessionId || !lookupResult || parsedFoundPrice === null || parsedEstimatedQuantity === null || !scannedCode) return;
+  const handleConfirm = useCallback(async () => {
+    if (!sessionId || parsedFoundPrice === null || parsedEstimatedQuantity === null || !scannedCode) return;
     if (isConfirming) return;
 
     setIsConfirming(true);
+    setErrorMessage(null);
     try {
-      const input = buildScannedInput(lookupResult, parsedFoundPrice, parsedEstimatedQuantity, scannedCode);
-      console.debug('[Scan] confirm: lookupResult.price =', lookupResult.price);
-      console.debug('[Scan] confirm: parsedFoundPrice =', parsedFoundPrice);
-      console.debug('[Scan] confirm: input.price (→ Amazon Price) =', input.price);
-      console.debug('[Scan] confirm: input.amazonFees =', input.amazonFees);
+      const calc = await fetchProductCalculation({
+        barcode: scannedCode.barcode,
+        foundPrice: parsedFoundPrice,
+        // foundPrice is the per-unit COGS — the API needs it explicitly so
+        // the profit block populates instead of returning COGS_REQUIRED.
+        costOfGoods: parsedFoundPrice,
+        estimatedQuantity: parsedEstimatedQuantity,
+      });
+      // Server short-circuits with `{ approvalRequired: true }` when the
+      // ASIN is gated for our seller account. Skip the product entirely.
+      if ('approvalRequired' in calc && calc.approvalRequired) {
+        Alert.alert(
+          'Approval required',
+          'Amazon requires approval to list this product on your seller account. Skipping.',
+        );
+        resetScan();
+        return;
+      }
+      const input = buildScannedInput(calc as ProductCalculationFull, parsedFoundPrice, parsedEstimatedQuantity, scannedCode);
       const product = addScannedProduct(sessionId, input);
-      console.debug('[Scan] stored product.price =', product.price);
       resetScan();
       router.replace(`/session/${sessionId}/product/${product.id}`);
     } catch (error) {
@@ -226,7 +246,6 @@ export default function ScanScreen() {
     }
   }, [
     sessionId,
-    lookupResult,
     parsedFoundPrice,
     parsedEstimatedQuantity,
     scannedCode,
@@ -236,7 +255,7 @@ export default function ScanScreen() {
     router,
   ]);
 
-  const showSheet = lookupResult !== null;
+  const showSheet = scannedCode !== null;
   const cameraActive = !showSheet;
 
   if (!sessionId) {
@@ -311,12 +330,7 @@ export default function ScanScreen() {
       {/* Status strip */}
       <SafeAreaView edges={['bottom']} style={styles.statusSafe} pointerEvents="box-none">
         <View style={styles.statusStrip}>
-          {isLookingUp ? (
-            <View style={styles.statusRow}>
-              <ActivityIndicator color={colors.accent} size="small" />
-              <Text style={styles.statusText}>Looking up product…</Text>
-            </View>
-          ) : errorMessage ? (
+          {errorMessage ? (
             <View style={styles.statusRow}>
               <Text style={[styles.statusText, styles.statusError]}>{errorMessage}</Text>
               <Pressable onPress={resetScan} hitSlop={8}>
@@ -347,27 +361,20 @@ export default function ScanScreen() {
             <SafeAreaView edges={['bottom']} style={styles.sheet}>
               <View style={styles.sheetHandle} />
               <View style={styles.sheetHeader}>
-                <Text style={styles.sheetEyebrow}>PRODUCT FOUND</Text>
+                <Text style={styles.sheetEyebrow}>BARCODE SCANNED</Text>
                 <Pressable style={styles.sheetClose} onPress={resetScan} hitSlop={8}>
                   <X size={18} color={colors.textMuted} strokeWidth={2.2} />
                 </Pressable>
               </View>
 
               <Text style={styles.sheetTitle} numberOfLines={2}>
-                {lookupResult?.title ?? lookupResult?.brand ?? 'Unknown product'}
+                {scannedCode?.barcode ?? ''}
               </Text>
 
               <View style={styles.metaRow}>
-                {lookupResult?.asin ? (
-                  <Text style={styles.metaText}>ASIN {lookupResult.asin}</Text>
+                {scannedCode?.barcodeType ? (
+                  <Text style={styles.metaText}>{scannedCode.barcodeType.toUpperCase()}</Text>
                 ) : null}
-                {lookupResult?.price !== null && lookupResult?.price !== undefined ? (
-                  <Text style={styles.metaText}>
-                    Amazon ${lookupResult.price.toFixed(2)}
-                  </Text>
-                ) : (
-                  <Text style={styles.metaText}>No Amazon price available</Text>
-                )}
               </View>
 
               <Text style={styles.inputLabel}>Found Price</Text>
@@ -401,11 +408,16 @@ export default function ScanScreen() {
               </View>
 
               <GradientButton
-                label="Confirm"
+                label={isConfirming ? 'Calculating…' : 'Confirm'}
                 onPress={handleConfirm}
                 disabled={parsedFoundPrice === null || parsedEstimatedQuantity === null || isConfirming}
                 style={styles.confirmButton}
               />
+              {errorMessage ? (
+                <Text style={[styles.statusText, styles.statusError, { marginTop: 8, textAlign: 'center' }]}>
+                  {errorMessage}
+                </Text>
+              ) : null}
             </SafeAreaView>
           </KeyboardAvoidingView>
         </View>
