@@ -1,3 +1,4 @@
+import { BarcodeType } from '../types/amazon.types.js';
 /**
  * Infer barcode type based on the code format
  * UPC: 12 digits
@@ -8,16 +9,19 @@ export function inferBarcodeType(code) {
     const cleanCode = code.trim();
     // Check if it's numeric
     if (!/^\d+$/.test(cleanCode)) {
-        return 'UNKNOWN';
+        return BarcodeType.UNKNOWN;
     }
     // Determine type based on length
     if (cleanCode.length === 12) {
-        return 'UPC';
+        return BarcodeType.UPC;
     }
     else if (cleanCode.length === 13) {
-        return 'EAN';
+        return BarcodeType.EAN;
     }
-    return 'UNKNOWN';
+    else if (cleanCode.length == 8 || cleanCode.length == 14) {
+        return BarcodeType.GTIN;
+    }
+    return BarcodeType.UNKNOWN;
 }
 /**
  * Validate barcode format
@@ -30,26 +34,5 @@ export function isValidBarcode(code) {
     }
     // Must be 12 or 13 digits
     return cleanCode.length === 12 || cleanCode.length === 13;
-}
-/**
- * Validate ASIN format
- * ASINs are 10 characters, alphanumeric
- */
-export function isValidAsin(asin) {
-    const cleanAsin = asin.trim();
-    return /^[A-Z0-9]{10}$/i.test(cleanAsin);
-}
-/**
- * Convert barcode type to Amazon identifier type
- */
-export function barcodeTypeToIdentifierType(type) {
-    switch (type) {
-        case 'UPC':
-            return 'UPC';
-        case 'EAN':
-            return 'EAN';
-        default:
-            return 'UPC'; // Default fallback
-    }
 }
 //# sourceMappingURL=barcode.utils.js.map

@@ -1,73 +1,582 @@
-import e from "express";
-import type { 
-  Dimensions, 
-  Zone,
-  BoxOption,
-  BoxSelection,
-  ShippingEstimate, 
-  ShippingInput 
-} from "../types/calculation.types.js";
-import type { SingleProductStatistics } from "./statistics.service.js";
+import type {
+    SingleProductStatistics,
+    SellerOffer,
+    CompetitionAggregate,
+    BestSellerRank,
+} from "./statistics.service.js";
 
-export function calculateProductStatistics(input: SingleProductStatistics): any {
+type Dimensions = {
+  l: number;
+  w: number;
+  h: number;
+};
 
-    const estimateShipping = estimateUSPSShippingCost({
+type Zone = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+
+type BoxOption = {
+  name: string;
+  dimensions: Dimensions;
+};
+
+type BoxSelection = {
+  box: BoxOption;
+  actualUnitsFit: number;
+  packingEfficiency: number;
+};
+
+type ShippingInput = {
+  product: Dimensions;
+  productWeightLbs: number;
+  targetUnits: number;
+  zone: Zone;
+  packingEfficiency?: number;
+};
+
+type ShippingEstimate = {
+  selectedBox: BoxOption;
+  unitsInBox: number;
+  totalWeightLbs: number;
+  billableWeight: number;
+  usedDimWeight: boolean;
+  shippingCost: number;
+  costPerUnit: number;
+};
+
+export type CalculationOptions = {
+    /**
+     * Per-unit cost of goods sold. REQUIRED for profit math \u2014 omitting it
+     * causes the profit block to come back populated with an explicit
+     * `COGS_REQUIRED` error rather than a misleading $0 default.
+     */
+    costOfGoods?: number;
+};
+
+/**
+ * Per-unit fee constants used for inbound + post-sale flows. These are NOT
+ * available via SP-API, so we hardcode current US rate-card values and
+ * surface the size-tier they apply to so the UI/audit trail is honest.
+ *
+ * Sources (US, 2024):
+ *   - Inbound Placement Service Fee \u2014 minimums per Amazon's published table
+ *   - Removal/disposal \u2014 FBA Fees rate card (per-unit, standard tier)
+ */
+const INBOUND_PLACEMENT_FEE = {
+    standard: 0.27,
+    oversize: 1.58,
+} as const;
+
+const REMOVAL_FEE_PER_UNIT = {
+    standard: 2.27,
+    oversize: 4.40,
+} as const;
+
+const DISPOSAL_FEE_PER_UNIT = {
+    standard: 0.32,
+    oversize: 1.45,
+} as const;
+
+/** Threshold (days) at which Amazon's long-term / aged-inventory surcharge kicks in. */
+const LONG_TERM_STORAGE_DAY_THRESHOLD = 180;
+
+export function calculateProductStatistics(
+    input: SingleProductStatistics,
+    options: CalculationOptions = {}
+): any {
+    const quantity = Math.max(1, input.estimatedQuantity || 1);
+
+    const shippingEstimate = estimateUSPSShippingCost({
         product: {
             l: input.dimensions.lengthIn || 0,
             w: input.dimensions.widthIn || 0,
-            h: input.dimensions.heightIn || 0
+            h: input.dimensions.heightIn || 0,
         },
         productWeightLbs: input.dimensions.weightLb || 0,
-        targetUnits: input.estimatedQuantity || 0,
+        targetUnits: quantity,
         zone: 1,
     });
+    const shippingToAmazonPerUnit = round2(shippingEstimate.shippingCost / quantity);
 
-    const profitMargin = findProfitMargin({
+    // Resolve fees up-front so profit math has clean inputs.
+    const referralFee = input.categoryFee.amount ?? 0;
+    const fulfillmentFee = input.fulfillmentFee.amount ?? 0; // 0 only if SP-API didn't return
+    const storageFeeMonthly = input.storageFee.monthlyFee ?? 0;
+
+    const sizeTier: 'standard' | 'oversize' =
+        input.storageFee.sizeTier === 'oversize' ? 'oversize' : 'standard';
+    const inboundPlacementFeePerUnit = INBOUND_PLACEMENT_FEE[sizeTier];
+    const removalFeePerUnit = REMOVAL_FEE_PER_UNIT[sizeTier];
+    const disposalFeePerUnit = DISPOSAL_FEE_PER_UNIT[sizeTier];
+
+    const amazonPrice = getAmazonPrice({
         buyBoxPrice: input.buyBoxPrice?.amount || 0,
         lowestPrice: input.lowestPrice?.amount || 0,
-        foundPrice: input.foundPrice?.amount || 0,
-        fbaFee: input.categoryFee.amount || 0,
-        shippingCost: estimateShipping.shippingCost,
     });
 
+    // Profit \u2014 requires COGS. If caller didn't supply it, surface an
+    // explicit error rather than silently treating cost as $0.
+    const profit = computeProfit({
+        amazonPrice,
+        costOfGoods: options.costOfGoods,
+        referralFee,
+        fulfillmentFee,
+        inboundPlacementFeePerUnit,
+        shippingToAmazonPerUnit,
+        quantity,
+    });
+
+    // BSR \u2192 sales velocity \u2192 days-to-sell \u2192 long-term-storage risk
+    const salesEstimate = estimateMonthlySalesFromBsr(input.bsr);
+    const daysToSell =
+        salesEstimate.unitsPerMonth && salesEstimate.unitsPerMonth > 0
+            ? Math.round((quantity / salesEstimate.unitsPerMonth) * 30)
+            : null;
+    const longTermStorageRisk =
+        daysToSell !== null && daysToSell > LONG_TERM_STORAGE_DAY_THRESHOLD;
+
+    const competitionAnalysis = analyzeCompetition(input);
+
     return {
-        profitMarginAmount: profitMargin.marginAmount,
-        profitMarginPercentage: profitMargin.marginPercentage,
-        estimatedShippingFee: estimateShipping.shippingCost,
-        fullfillmentByAmazonFee: input.categoryFee.amount || 15,
-        storageFee: input.storageFee.monthlyFee || 0,
-        sellerPopularity: input.seller.popularity || 0,
-        bsr: {
-            rank: input.bsr?.rank || 0,
-            category: input.bsr?.category || 'Unknown',
-            link: input.bsr?.link || ''
-        }
-        // Add more statistics as needed
+        metadata: {
+            asin: input.asin,
+            marketplaceId: input.marketplaceId,
+            title: input.title || 'Unknown Product',
+            image: input.image || '',
+        },
+        calculatedValues: {
+            amazonPrice,
+            costOfGoodsPerUnit: typeof options.costOfGoods === 'number' ? options.costOfGoods : null,
+            // Distinct fee line items \u2014 mirrors Amazon's FBA Revenue Calculator.
+            referralFee: round2(referralFee),
+            fullfillmentByAmazonFee: input.fulfillmentFee.amount,
+            fulfillmentFeeSource: input.fulfillmentFee.source,
+            inboundPlacementFeePerUnit: round2(inboundPlacementFeePerUnit),
+            shippingToAmazonFeePerUnit: shippingToAmazonPerUnit,
+            storageFee: round2(storageFeeMonthly),
+            removalFeePerUnit,
+            disposalFeePerUnit,
+            // Profit block \u2014 may carry an error when COGS is missing.
+            profit,
+        },
+        fetchedValues: {
+            sellerPopularity: input.seller.popularity || 0,
+            bsr: {
+                rank: input.bsr?.rank || 0,
+                category: input.bsr?.category || 'Unknown',
+                link: input.bsr?.link || '',
+            },
+            dimensions: {
+                lengthIn: input.dimensions.lengthIn || 0,
+                widthIn: input.dimensions.widthIn || 0,
+                heightIn: input.dimensions.heightIn || 0,
+                weightLb: input.dimensions.weightLb || 0,
+            },
+            inboundEligibility: {
+                isEligible: /*input.inboundEligibility.isEligible*/ true, // TODO: re-enable once SP-API is stable
+                reasons: /*input.inboundEligibility.reasons*/ [], // TODO: re-enable once SP-API is stable
+            },
+            competition: competitionAnalysis,
+            salesEstimate: {
+                ...salesEstimate,
+                daysToSell,
+                longTermStorageRisk,
+                longTermStorageThresholdDays: LONG_TERM_STORAGE_DAY_THRESHOLD,
+            },
+            storageFeeSeasonal: {
+                activeSeason: input.storageFee.season,
+                ratesPerCubicFoot: input.storageFee.seasonalRates,
+                monthlyFees: input.storageFee.seasonalMonthlyFees,
+            },
+        },
     };
 }
 
 /**
- * Computes profit margin (amount + percentage) after FBA fee and shipping cost.
- *
- * Sale price is modeled as a weighted blend of Buy Box (85%) and Lowest (15%).
- * Margin amount  = blendedSalePrice - foundPrice - fbaFee - shippingCost
- * Margin percent = marginAmount / (foundPrice + fbaFee + shippingCost) * 100
+ * Computes profit, ROI, and margin for the given inputs. Returns an object
+ * with `error: 'COGS_REQUIRED'` when the caller didn't pass a per-unit COGS,
+ * because silently defaulting cost to 0 was the source of long-running
+ * profit-overstatement bugs (and the reason this function exists).
  */
-function findProfitMargin(input: {
+function computeProfit(input: {
+    amazonPrice: number;
+    costOfGoods: number | undefined;
+    referralFee: number;
+    fulfillmentFee: number;
+    inboundPlacementFeePerUnit: number;
+    shippingToAmazonPerUnit: number;
+    quantity: number;
+}): {
+    error: string | null;
+    message: string | null;
+    netProfitPerUnit: number | null;
+    netProfitTotal: number | null;
+    roi: number | null;
+    marginPercentage: number | null;
+    totalFeesPerUnit: number | null;
+} {
+    const totalFeesPerUnit = round2(
+        input.referralFee +
+            input.fulfillmentFee +
+            input.inboundPlacementFeePerUnit +
+            input.shippingToAmazonPerUnit
+    );
+
+    if (typeof input.costOfGoods !== 'number' || !Number.isFinite(input.costOfGoods) || input.costOfGoods < 0) {
+        return {
+            error: 'COGS_REQUIRED',
+            message:
+                'costOfGoods (per-unit, USD) is required for profit calculation. Pass ?costOfGoods=N on the request.',
+            netProfitPerUnit: null,
+            netProfitTotal: null,
+            roi: null,
+            marginPercentage: null,
+            totalFeesPerUnit,
+        };
+    }
+
+    const cogs = input.costOfGoods;
+    const netProfitPerUnit = round2(input.amazonPrice - totalFeesPerUnit - cogs);
+    const netProfitTotal = round2(netProfitPerUnit * input.quantity);
+    const roi = cogs > 0 ? round2((netProfitPerUnit / cogs) * 100) : null;
+    const marginPercentage =
+        input.amazonPrice > 0 ? round2((netProfitPerUnit / input.amazonPrice) * 100) : null;
+
+    return {
+        error: null,
+        message: null,
+        netProfitPerUnit,
+        netProfitTotal,
+        roi,
+        marginPercentage,
+        totalFeesPerUnit,
+    };
+}
+
+function getAmazonPrice(input: {
     buyBoxPrice: number;
     lowestPrice: number;
-    foundPrice: number;
-    fbaFee: number;
-    shippingCost: number;
-}): { marginAmount: number; marginPercentage: number } {
-    const { buyBoxPrice, lowestPrice, foundPrice, fbaFee, shippingCost } = input;
+}): number {
+    const { buyBoxPrice, lowestPrice } = input;
 
-    const blendedSalePrice = buyBoxPrice * 0.85 + lowestPrice * 0.15;
-    const totalCost = foundPrice + fbaFee + shippingCost;
-    const marginAmount = blendedSalePrice - totalCost;
-    const marginPercentage = totalCost > 0 ? (marginAmount / totalCost) * 100 : 0;
+    if (buyBoxPrice !== 0 && lowestPrice !== 0) {
+        return round2(buyBoxPrice * 0.85 + lowestPrice * 0.15);
+    } else if (buyBoxPrice !== 0) {
+        return buyBoxPrice;
+    } else if (lowestPrice !== 0) {
+        return lowestPrice;
+    }
 
-    return { marginAmount, marginPercentage };
+    return -1;
+}
+
+function round2(n: number): number {
+    return Math.round(n * 100) / 100;
+}
+
+// --------------------------------------------------------------------------------------------------
+// @section:bsr-sales-estimate
+// --------------------------------------------------------------------------------------------------
+
+/**
+ * Rough monthly-sales anchor points by category. Indexed by BSR; values are
+ * estimated units-sold per month at that rank in the US marketplace.
+ *
+ * These numbers are coarse industry averages (Helium 10 / Jungle Scout style
+ * estimates). They're meant for relative ranking and "ballpark days-to-sell"
+ * decisions, not exact forecasting. Refine over time with our own data.
+ */
+const BSR_SALES_TABLES: Record<string, Array<[number, number]>> = {
+    'Beauty & Personal Care': [
+        [1, 25000], [100, 3000], [1000, 600], [10000, 150], [100000, 30], [1000000, 3],
+    ],
+    'Home & Kitchen': [
+        [1, 30000], [100, 3500], [1000, 700], [10000, 180], [100000, 35], [1000000, 4],
+    ],
+    'Toys & Games': [
+        [1, 35000], [100, 4500], [1000, 900], [10000, 220], [100000, 45], [1000000, 5],
+    ],
+    'Health & Household': [
+        [1, 25000], [100, 3000], [1000, 600], [10000, 150], [100000, 30], [1000000, 3],
+    ],
+    'Grocery & Gourmet Food': [
+        [1, 30000], [100, 4000], [1000, 800], [10000, 200], [100000, 40], [1000000, 4],
+    ],
+    'Office Products': [
+        [1, 20000], [100, 2500], [1000, 500], [10000, 120], [100000, 25], [1000000, 2],
+    ],
+    Default: [
+        [1, 25000], [100, 3000], [1000, 600], [10000, 150], [100000, 30], [1000000, 3],
+    ],
+};
+
+function pickSalesTable(category: string | undefined | null): Array<[number, number]> {
+    if (!category) return BSR_SALES_TABLES.Default!;
+    const lowered = category.toLowerCase();
+    for (const key of Object.keys(BSR_SALES_TABLES)) {
+        if (key === 'Default') continue;
+        if (lowered.includes(key.toLowerCase())) return BSR_SALES_TABLES[key]!;
+    }
+    return BSR_SALES_TABLES.Default!;
+}
+
+/**
+ * Log-log linear interpolation between the two anchor points that bracket
+ * the input rank. BSR \u2194 sales is famously power-law shaped, so log-log is
+ * a much better fit than plain linear interpolation.
+ */
+function estimateMonthlySalesFromBsr(bsr: BestSellerRank | null): {
+    unitsPerMonth: number | null;
+    confidence: 'high' | 'medium' | 'low' | 'none';
+    table: string;
+} {
+    if (!bsr || !bsr.rank || bsr.rank <= 0) {
+        return { unitsPerMonth: null, confidence: 'none', table: 'unknown' };
+    }
+
+    const rank = bsr.rank;
+    const table = pickSalesTable(bsr.category);
+    const tableName = bsr.category && pickSalesTable(bsr.category) !== BSR_SALES_TABLES.Default
+        ? bsr.category
+        : 'Default';
+
+    // Find bracketing anchors
+    let lower = table[0]!;
+    let upper = table[table.length - 1]!;
+    for (let i = 0; i < table.length - 1; i++) {
+        const a = table[i]!;
+        const b = table[i + 1]!;
+        if (rank >= a[0] && rank <= b[0]) {
+            lower = a;
+            upper = b;
+            break;
+        }
+    }
+
+    let unitsPerMonth: number;
+    if (rank <= lower[0]) {
+        unitsPerMonth = lower[1];
+    } else if (rank >= upper[0]) {
+        unitsPerMonth = upper[1];
+    } else {
+        const logRank = Math.log10(rank);
+        const logLowerR = Math.log10(lower[0]);
+        const logUpperR = Math.log10(upper[0]);
+        const logLowerS = Math.log10(lower[1]);
+        const logUpperS = Math.log10(upper[1]);
+        const t = (logRank - logLowerR) / (logUpperR - logLowerR);
+        unitsPerMonth = Math.round(Math.pow(10, logLowerS + t * (logUpperS - logLowerS)));
+    }
+
+    // Coarse confidence buckets \u2014 BSR is a noisy signal at the extremes.
+    let confidence: 'high' | 'medium' | 'low';
+    if (rank <= 1000) confidence = 'high';
+    else if (rank <= 50000) confidence = 'medium';
+    else confidence = 'low';
+
+    return { unitsPerMonth, confidence, table: tableName };
+}
+
+// --------------------------------------------------------------------------------------------------
+// @section:competition
+// --------------------------------------------------------------------------------------------------
+
+export type ScoredSeller = {
+    sellerId: string | null;
+    isAmazon: boolean;
+    isAmazonOwned: boolean;
+    amazonSellerType: SellerOffer['amazonSellerType'];
+    isFulfilledByAmazon: boolean;
+    isBuyBoxWinner: boolean;
+    isPrimeEligible: boolean;
+    landedPrice: number | null;
+    feedbackRating: number | null;
+    feedbackCount: number | null;
+    /** 0-100 threat score for THIS seller relative to the listing. */
+    threatScore: number;
+};
+
+export type CompetitionVerdict = 'BUY' | 'CAUTION' | 'AVOID';
+
+export type Recommendation = {
+    verdict: CompetitionVerdict;
+    competitionScore: number;
+    primaryConcerns: string[];
+    opportunities: string[];
+    /** Suggested entry price to undercut current Buy Box (5% below). Null if no buy box. */
+    suggestedEntryPrice: number | null;
+    /** Naive expected Buy Box share for a new FBA seller, as 0-100. */
+    estimatedBuyBoxShare: number;
+};
+
+export type CompetitionAnalysis = {
+    aggregate: CompetitionAggregate;
+    sellers: ScoredSeller[];
+    /** 0-100 difficulty score for the listing as a whole. */
+    competitionScore: number;
+    difficultyTier: 'low' | 'moderate' | 'high' | 'avoid';
+    recommendation: Recommendation;
+};
+
+/**
+ * Threat-score weights. Centralized so they're easy to tune without
+ * hunting through the function body.
+ */
+const THREAT_WEIGHTS = {
+    amazonAuto: 100,        // Amazon Retail (1P) -> full 100, short-circuits
+    amazonOwnedAuto: 60,    // AWD / Amazon Resale -> moderate floor; condition-limited
+    buyBoxWinner: 30,
+    fbaFulfillment: 20,
+    strongFeedback: 15,     // rating >= 4.5 (i.e. >=90% positive) AND >=1000 reviews
+    nearBuyBoxPrice: 20,    // landed price within 5% of buy-box landed price
+    primeEligible: 15,
+} as const;
+
+/** Score a single seller 0-100 based on how threatening they are on this listing. */
+function calculateThreatScore(
+    seller: SellerOffer,
+    buyBoxLandedPrice: number | null
+): number {
+    // Amazon Retail dominates the buy box outright \u2014 max threat.
+    if (seller.isAmazon) return THREAT_WEIGHTS.amazonAuto;
+
+    // AWD / Amazon Resale carry the Amazon halo but only on used/open-box
+    // inventory, so they suppress NEW-condition sellers' margins without
+    // fully owning the buy box. Treat as a moderate floor that other
+    // signals can still push higher.
+    let score = 0;
+    if (seller.isAmazonOwned) score = THREAT_WEIGHTS.amazonOwnedAuto;
+
+    if (seller.isBuyBoxWinner) score += THREAT_WEIGHTS.buyBoxWinner;
+    if (seller.isFulfilledByAmazon) score += THREAT_WEIGHTS.fbaFulfillment;
+
+    const ratingPercent = seller.feedbackRating ?? 0; // SP-API reports 0-100
+    const ratingCount = seller.feedbackCount ?? 0;
+    if (ratingPercent >= 90 && ratingCount >= 1000) score += THREAT_WEIGHTS.strongFeedback;
+
+    const landed = seller.landedPrice?.amount ?? null;
+    if (landed !== null && buyBoxLandedPrice && buyBoxLandedPrice > 0) {
+        const delta = Math.abs(landed - buyBoxLandedPrice) / buyBoxLandedPrice;
+        if (delta <= 0.05) score += THREAT_WEIGHTS.nearBuyBoxPrice;
+    }
+
+    if (seller.isPrimeEligible) score += THREAT_WEIGHTS.primeEligible;
+
+    return Math.min(100, score);
+}
+
+/** Map a 0-100 competition score to a coarse difficulty tier. */
+function difficultyTierFor(score: number): CompetitionAnalysis['difficultyTier'] {
+    if (score <= 30) return 'low';
+    if (score <= 60) return 'moderate';
+    if (score <= 85) return 'high';
+    return 'avoid';
+}
+
+/**
+ * Builds the verdict + reasoning. Mirrors the decision rules in the spec:
+ *   - AVOID if Amazon is selling AND winning Buy Box
+ *   - AVOID if more than 10 FBA sellers
+ *   - CAUTION if 5-10 FBA sellers
+ *   - CAUTION if competition score >= 70 (proxy for "dominant seller")
+ *   - else BUY
+ */
+function buildRecommendation(
+    aggregate: CompetitionAggregate,
+    competitionScore: number,
+    sellers: ReadonlyArray<SellerOffer>
+): Recommendation {
+    const concerns: string[] = [];
+    const opportunities: string[] = [];
+
+    if (aggregate.amazonIsSelling) concerns.push('Amazon is selling on this listing');
+    if (aggregate.amazonIsBuyBoxWinner) concerns.push('Amazon currently owns the Buy Box');
+    const awdPresent = sellers.some(
+        (s) => s.amazonSellerType === 'amazon-warehouse-deals' || s.amazonSellerType === 'amazon-resale'
+    );
+    if (awdPresent) concerns.push('Amazon Warehouse Deals is selling used/open-box inventory');
+    if (aggregate.fbaSellerCount > 10) concerns.push(`${aggregate.fbaSellerCount} FBA sellers compete here`);
+    else if (aggregate.fbaSellerCount >= 5) concerns.push(`${aggregate.fbaSellerCount} FBA sellers (moderate saturation)`);
+    if ((aggregate.priceSpread ?? 0) > 0 && aggregate.lowestFbaPrice && aggregate.buyBoxPrice) {
+        const undercut = aggregate.buyBoxPrice.amount - aggregate.lowestFbaPrice.amount;
+        if (undercut > 0.5) concerns.push('Lowest FBA offer materially undercuts the Buy Box');
+    }
+
+    if (!aggregate.amazonIsSelling) opportunities.push('Amazon is not selling this listing');
+    if (aggregate.fbaSellerCount <= 3) opportunities.push('Few FBA competitors');
+    if (aggregate.fbmSellerCount > aggregate.fbaSellerCount) opportunities.push('FBM-heavy listing — FBA Prime advantage available');
+    if (aggregate.totalSellerCount === 0) opportunities.push('No active offers — open listing');
+
+    let verdict: CompetitionVerdict;
+    if (aggregate.amazonIsSelling && aggregate.amazonIsBuyBoxWinner) verdict = 'AVOID';
+    else if (aggregate.fbaSellerCount > 10) verdict = 'AVOID';
+    else if (competitionScore >= 70) verdict = 'CAUTION';
+    else if (aggregate.fbaSellerCount >= 5) verdict = 'CAUTION';
+    else verdict = 'BUY';
+
+    const buyBoxAmount = aggregate.buyBoxPrice?.amount ?? null;
+    const suggestedEntryPrice =
+        buyBoxAmount !== null ? Math.round(buyBoxAmount * 0.95 * 100) / 100 : null;
+
+    // Naive Buy Box share estimate: split among FBA sellers when Amazon
+    // isn't dominant. New entrants typically capture 1/(FBA count + 1).
+    let estimatedBuyBoxShare: number;
+    if (aggregate.amazonIsBuyBoxWinner) {
+        estimatedBuyBoxShare = 0;
+    } else {
+        const competingFba = Math.max(1, aggregate.fbaSellerCount);
+        estimatedBuyBoxShare = Math.round((1 / (competingFba + 1)) * 100);
+    }
+
+    return {
+        verdict,
+        competitionScore,
+        primaryConcerns: concerns,
+        opportunities,
+        suggestedEntryPrice,
+        estimatedBuyBoxShare,
+    };
+}
+
+/**
+ * Top-level competition analyzer. Consumes the data already gathered by
+ * statistics.service and produces threat scores + a recommendation.
+ *
+ * Listing-level competition score is the higher of:
+ *   - the max per-seller threat score (worst single competitor), and
+ *   - the saturation pressure (capped FBA-seller count * 8).
+ * This way an over-saturated listing scores high even if no single seller
+ * is individually dominant.
+ */
+function analyzeCompetition(input: SingleProductStatistics): CompetitionAnalysis {
+    const { aggregate, sellers } = input.competition;
+    const buyBoxLanded = aggregate.buyBoxPrice?.amount ?? null;
+
+    const scoredSellers: ScoredSeller[] = sellers.map((s) => ({
+        sellerId: s.sellerId,
+        isAmazon: s.isAmazon,
+        isAmazonOwned: s.isAmazonOwned,
+        amazonSellerType: s.amazonSellerType,
+        isFulfilledByAmazon: s.isFulfilledByAmazon,
+        isBuyBoxWinner: s.isBuyBoxWinner,
+        isPrimeEligible: s.isPrimeEligible,
+        landedPrice: s.landedPrice?.amount ?? null,
+        feedbackRating: s.feedbackRating,
+        feedbackCount: s.feedbackCount,
+        threatScore: calculateThreatScore(s, buyBoxLanded),
+    }));
+
+    const maxThreat = scoredSellers.reduce((m, s) => Math.max(m, s.threatScore), 0);
+    const saturationPressure = Math.min(100, aggregate.fbaSellerCount * 8);
+    const competitionScore = Math.max(maxThreat, saturationPressure);
+
+    const recommendation = buildRecommendation(aggregate, competitionScore, sellers);
+
+    return {
+        aggregate,
+        sellers: scoredSellers,
+        competitionScore,
+        difficultyTier: difficultyTierFor(competitionScore),
+        recommendation,
+    };
 }
 
 // --------------------------------------------------------------------------------------------------

@@ -17,6 +17,9 @@
 import amazonCatalogService from './amazon/catalog.service.js';
 import amazonPricingService from './amazon/pricing.service.js';
 import amazonFeesService from './amazon/fees.service.js';
+import amazonEligibilityService, {
+	type InboundEligibilityResult,
+} from './amazon/eligibility.service.js';
 import amazonClient from './amazon/client.service.js';
 
 // ─────────────────────────────────────────────────────────────────────
@@ -53,13 +56,13 @@ export type BestSellerRank = {
 	link?: string;
 };
 
-export type OfferCounts = {
+type OfferCounts = {
 	total: number;
 	fba: number;
 	fbm: number;
 };
 
-export type SellerStats = {
+type SellerStats = {
 	/**
 	 * Popularity proxy: number of feedback ratings the Buy Box seller has
 	 * received. Higher = more transaction volume over time.
@@ -69,7 +72,7 @@ export type SellerStats = {
 	feedbackRating: number | null;
 };
 
-export type ProductFlags = {
+type ProductFlags = {
 	/** Raw material strings extracted from the catalog (e.g. "glass"). */
 	materials: string[];
 	isFragile: boolean;
@@ -78,7 +81,57 @@ export type ProductFlags = {
 	containsBatteries: boolean;
 };
 
-export type PackageDimensions = {
+/**
+ * Per-seller offer details extracted from the SP-API offers payload.
+ * Pure data — no scoring (that lives in calculation.service).
+ */
+export type SellerOffer = {
+	sellerId: string | null;
+	/** True only for Amazon Retail (1P). Excludes AWD / Amazon Resale. */
+	isAmazon: boolean;
+	/** True if the seller is any Amazon-owned entity (Retail OR Warehouse Deals OR Resale). */
+	isAmazonOwned: boolean;
+	/** Which Amazon-owned program this seller is, when applicable. */
+	amazonSellerType: 'amazon-retail' | 'amazon-warehouse-deals' | 'amazon-resale' | null;
+	isFulfilledByAmazon: boolean;
+	isBuyBoxWinner: boolean;
+	isFeaturedMerchant: boolean;
+	isPrimeEligible: boolean;
+	condition: string | null;
+	listingPrice: Money | null;
+	shippingPrice: Money | null;
+	/** listingPrice + shippingPrice (in listing currency). Null if no listing price. */
+	landedPrice: Money | null;
+	feedbackRating: number | null;
+	feedbackCount: number | null;
+	/** Country / region the offer ships from, when reported. */
+	shipsFrom: string | null;
+};
+
+/** Listing-level aggregate metrics across all observed sellers. */
+export type CompetitionAggregate = {
+	totalSellerCount: number;
+	fbaSellerCount: number;
+	fbmSellerCount: number;
+	newConditionCount: number;
+	amazonIsSelling: boolean;
+	amazonIsBuyBoxWinner: boolean;
+	buyBoxPrice: Money | null;
+	buyBoxSellerId: string | null;
+	lowestFbaPrice: Money | null;
+	lowestFbmPrice: Money | null;
+	/** highest landed price minus lowest landed price (listing currency). */
+	priceSpread: number | null;
+	/** mean SellerPositiveFeedbackRating across sellers that report it (0–100). */
+	averageFeedbackRating: number | null;
+};
+
+type CompetitionData = {
+	sellers: SellerOffer[];
+	aggregate: CompetitionAggregate;
+};
+
+type PackageDimensions = {
 	/** Each dimension is in inches; `weightLb` is in pounds. Null if unknown. */
 	lengthIn: number | null;
 	widthIn: number | null;
@@ -88,7 +141,7 @@ export type PackageDimensions = {
 	cubicFeet: number | null;
 };
 
-export type CategoryFeeEstimate = {
+type CategoryFeeEstimate = {
 	/** Referral-fee category name used for the rate lookup. */
 	category: string;
 	/** Rate expressed as a decimal (0.15 = 15%). */
@@ -104,48 +157,40 @@ export type CategoryFeeEstimate = {
 	source: 'sp-api' | 'local-map' | 'default';
 };
 
-export type StorageFeeEstimate = {
+/**
+ * FBA fulfillment (pick & pack) fee — distinct from the referral fee
+ * captured in `CategoryFeeEstimate`. Pulled from the SP-API fees estimate
+ * when available; falls back to a published US rate-card estimate based
+ * on package dimensions + weight when SP-API doesn't return one.
+ */
+type FulfillmentFeeEstimate = {
+	amount: number | null;
+	source: 'sp-api' | 'rate-card' | 'unavailable';
+};
+
+type StorageSeason = 'jan-sep' | 'oct-dec';
+
+type StorageFeeEstimate = {
 	/** Standard-size vs oversize classification used for the calculation. */
 	sizeTier: 'standard' | 'oversize' | 'unknown';
-	/** Season used in the calculation (affects rate). */
-	season: 'jan-sep' | 'oct-dec';
-	/** Rate in USD per cubic foot per month. */
+	/** Active season (drives `ratePerCubicFoot` / `monthlyFee`). */
+	season: StorageSeason;
+	/** Rate in USD per cubic foot for the active season. */
 	ratePerCubicFoot: number | null;
-	/** Estimated monthly storage fee in USD. Null if dimensions unknown. */
+	/** Estimated monthly storage fee for the active season. Null if dimensions unknown. */
 	monthlyFee: number | null;
-};
-
-export type MonthlySalesPoint = {
-	/** ISO date for the start of the period (e.g. "2026-03-01"). */
-	periodStart: string;
-	/** ISO date for the end of the period (e.g. "2026-03-31"). */
-	periodEnd: string;
-	unitsOrdered: number;
-	orderedProductSalesAmount: number;
-	currency: string;
-	sessions: number;
-	pageViews: number;
-};
-
-export type MonthlySalesData = {
-	/**
-	 * Why the data is or isn't present:
-	 *  - 'ok'         → report fetched and parsed successfully
-	 *  - 'empty'      → report ran but had no rows for this ASIN
-	 *                   (likely the seller doesn't list it)
-	 *  - 'not-ready'  → report didn't finish in our polling window;
-	 *                   try again in a minute or two
-	 *  - 'error'      → Reports API call failed; see message
-	 */
-	status: 'ok' | 'empty' | 'not-ready' | 'error';
-	periods: MonthlySalesPoint[];
-	message?: string;
+	/** Both seasonal rates, exposed so the UI can warn about the Q4 spike. */
+	seasonalRates: { 'jan-sep': number; 'oct-dec': number } | null;
+	/** Both seasonal monthly fees, computed from cubic feet. */
+	seasonalMonthlyFees: { 'jan-sep': number; 'oct-dec': number } | null;
 };
 
 export type SingleProductStatistics = {
 	asin: string;
 	marketplaceId: string;
 	title: string | null;
+	/** URL of the product's MAIN image for this marketplace, or null if unavailable. */
+	image: string | null;
 	buyBoxPrice: Money | null;
 	lowestPrice: Money | null;
 	/** Frontend-provided price the user found the product at. */
@@ -158,13 +203,13 @@ export type SingleProductStatistics = {
 	flags: ProductFlags;
 	dimensions: PackageDimensions;
 	categoryFee: CategoryFeeEstimate;
+	/** FBA fulfillment (pick & pack) fee, separate from referral fee. */
+	fulfillmentFee: FulfillmentFeeEstimate;
 	storageFee: StorageFeeEstimate;
-	/**
-	 * Monthly sales for THIS ASIN from the seller's own account
-	 * (`GET_SALES_AND_TRAFFIC_REPORT`). Not market-wide demand —
-	 * empty if the seller doesn't list this ASIN.
-	 */
-	monthlySales: MonthlySalesData;
+	/** FBA INBOUND eligibility for this ASIN, with translated reason codes. */
+	inboundEligibility: InboundEligibilityResult;
+	/** Per-seller offers + listing-level aggregate metrics. */
+	competition: CompetitionData;
 };
 
 // ─────────────────────────────────────────────────────────────────────
@@ -207,12 +252,14 @@ export async function getSingleProductStatistics(
 	// 3. Derive everything from the catalog + offers payloads
 	const summary = pickSummary(catalogItem, marketplaceId);
 	const title = typeof summary?.itemName === 'string' ? summary.itemName : null;
+	const image = extractMainImage(catalogItem, marketplaceId);
 
 	const buyBoxPrice = readMoney(offersPayload?.Summary?.BuyBoxPrices?.[0]?.ListingPrice);
 	const lowestPrice = readMoney(offersPayload?.Summary?.LowestPrices?.[0]?.ListingPrice);
 	const bsr = extractBsr(catalogItem?.salesRanks ?? [], marketplaceId);
 	const offers = countOffers(offersPayload);
 	const seller = extractBuyBoxSeller(offersPayload);
+	const competition = extractCompetition(offersPayload, marketplaceId);
 	const flags = extractFlags(catalogItem);
 	const dimensions = extractDimensions(catalogItem);
 
@@ -221,24 +268,31 @@ export async function getSingleProductStatistics(
 	//    it reflects Amazon's actual rate (including tiers/promotions) for this
 	//    exact ASIN. We fall back to the local map if the API call fails or if
 	//    there's no price to submit.
+	// 4. Calculated fees
+	//    Prefer the live SP-API fees estimate over the static category map —
+	//    one estimate call returns BOTH the referral fee and the FBA
+	//    fulfillment (pick & pack) fee. Splitting them here is critical:
+	//    they're distinct line items in Amazon's calculator, and conflating
+	//    them was the source of a profit miscalculation bug.
 	const priceForFee = buyBoxPrice ?? lowestPrice;
-	const categoryFee = await resolveCategoryFee({
-		asin,
-		marketplaceId,
-		summary,
-		price: priceForFee,
-	});
+	const [feesResult, inboundEligibility] = await Promise.all([
+		resolveCombinedFees({
+			asin,
+			marketplaceId,
+			summary,
+			price: priceForFee,
+			dimensions,
+		}),
+		amazonEligibilityService.getInboundEligibility(asin, marketplaceId, 'INBOUND'),
+	]);
+	const { categoryFee, fulfillmentFee } = feesResult;
 	const storageFee = estimateMonthlyStorageFee(dimensions);
-
-	// 5. Monthly sales (seller-account scoped). Soft-fail to keep the
-	//    rest of the response intact even if the Reports API is slow or
-	//    the seller has no data for this ASIN.
-	const monthlySales = await fetchMonthlySalesForAsin(asin, marketplaceId);
 
 	return {
 		asin,
 		marketplaceId,
 		title,
+		image,
 		buyBoxPrice,
 		lowestPrice,
 		foundPrice: params.foundPrice ?? null,
@@ -252,8 +306,10 @@ export async function getSingleProductStatistics(
 		flags,
 		dimensions,
 		categoryFee,
+		fulfillmentFee,
 		storageFee,
-		monthlySales,
+		inboundEligibility,
+		competition,
 	};
 }
 
@@ -296,87 +352,30 @@ async function fetchOffers(asin: string, marketplaceId: string): Promise<unknown
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Monthly sales (Reports API)
-// ─────────────────────────────────────────────────────────────────────
-
-/** Default lookback window for monthly sales: previous 3 full months. */
-function buildMonthlySalesDateRange(): { dataStartTime: string; dataEndTime: string } {
-	const now = new Date();
-	// End of last fully-completed month
-	const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 0, 23, 59, 59));
-	// Start of the month 3 months before that
-	const start = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth() - 2, 1, 0, 0, 0));
-	return {
-		dataStartTime: start.toISOString(),
-		dataEndTime: end.toISOString(),
-	};
-}
-
-async function fetchMonthlySalesForAsin(
-	asin: string,
-	marketplaceId: string
-): Promise<MonthlySalesData> {
-	const { dataStartTime, dataEndTime } = buildMonthlySalesDateRange();
-	try {
-		const { rows } = await amazonCatalogService.fetchSalesAndTrafficReportForAsin({
-			asin,
-			marketplaceId,
-			dataStartTime,
-			dataEndTime,
-			dateGranularity: 'MONTH',
-			asinGranularity: 'CHILD',
-		});
-
-		if (rows.length === 0) {
-			return { status: 'empty', periods: [] };
-		}
-
-		const periods = rows.map(mapSalesRow).filter((p): p is MonthlySalesPoint => p !== null);
-		return { status: 'ok', periods };
-	} catch (error: any) {
-		if (error?.name === 'ReportNotReady') {
-			return { status: 'not-ready', periods: [], message: error.message };
-		}
-		return {
-			status: 'error',
-			periods: [],
-			message: error?.message ?? 'Failed to fetch sales-and-traffic report',
-		};
-	}
-}
-
-function mapSalesRow(row: any): MonthlySalesPoint | null {
-	if (!row || typeof row !== 'object') return null;
-
-	const sales = row.salesByAsin ?? row.sales ?? {};
-	const traffic = row.trafficByAsin ?? row.traffic ?? {};
-	const date = row.date ?? row.startDate ?? {};
-
-	const periodStart =
-		typeof date === 'string' ? date : (date.startDate ?? row.startDate ?? '');
-	const periodEnd =
-		typeof date === 'string' ? date : (date.endDate ?? row.endDate ?? periodStart);
-
-	const orderedSales = sales.orderedProductSales ?? sales.orderedProductSalesB2B ?? {};
-
-	return {
-		periodStart: String(periodStart),
-		periodEnd: String(periodEnd),
-		unitsOrdered: Number(sales.unitsOrdered ?? sales.unitsOrderedB2B ?? 0),
-		orderedProductSalesAmount: Number(orderedSales.amount ?? 0),
-		currency: typeof orderedSales.currencyCode === 'string' ? orderedSales.currencyCode : 'USD',
-		sessions: Number(traffic.sessions ?? traffic.sessionsB2B ?? 0),
-		pageViews: Number(traffic.pageViews ?? traffic.pageViewsB2B ?? 0),
-	};
-}
-
-// ─────────────────────────────────────────────────────────────────────
 // Catalog extraction
 // ─────────────────────────────────────────────────────────────────────
 
 function pickSummary(catalogItem: any, marketplaceId: string): any | null {
 	const summaries: any[] = catalogItem?.summaries ?? [];
 	return summaries.find((s) => s.marketplaceId === marketplaceId) ?? summaries[0] ?? null;
+}
+
+/**
+ * Pulls the MAIN image URL for the given marketplace from the catalog item.
+ * Catalog Items v2022-04-01 shape:
+ *   item.images = [{ marketplaceId, images: [{ variant, link, height, width }, ...] }]
+ * Falls back to the first marketplace block, then the first image of any variant.
+ */
+function extractMainImage(catalogItem: any, marketplaceId: string): string | null {
+	const groups: any[] = catalogItem?.images ?? [];
+	if (groups.length === 0) return null;
+
+	const group = groups.find((g) => g?.marketplaceId === marketplaceId) ?? groups[0];
+	const images: any[] = group?.images ?? [];
+	if (images.length === 0) return null;
+
+	const main = images.find((img) => img?.variant === 'MAIN') ?? images[0];
+	return typeof main?.link === 'string' ? main.link : null;
 }
 
 function extractBsr(salesRanks: any[], marketplaceId: string): BestSellerRank | null {
@@ -424,6 +423,179 @@ function extractBuyBoxSeller(offersPayload: any): SellerStats {
 				? feedback.SellerPositiveFeedbackRating
 				: null,
 	};
+}
+
+/**
+ * The Amazon Retail (1P) seller IDs by marketplace.
+ * Amazon's offers come back with this SellerId; that's how we detect
+ * "Amazon as a seller" (vs. a third-party).
+ */
+const AMAZON_RETAIL_SELLER_IDS: Record<string, string> = {
+	ATVPDKIKX0DER: 'ATVPDKIKX0DER', // US (Amazon.com)
+	A2EUQ1WTGCTBG2: 'A3DWYIK6Y9EEQB', // CA
+	A1AM78C64UM0Y8: 'AVDBXBAVVSXLQ', // MX
+	A1F83G8C2ARO7P: 'A3P5ROKL5A1OLE', // UK
+	A1PA6795UKMFR9: 'A3JWKAKR8XB7XF', // DE
+	A13V1IB3VIYZZH: 'A1X6FK5RDHNB96', // FR
+	APJ6JRA9NG5V4: 'A11IL2PNWYJU7H', // IT
+	A1RKKUPIHCS9HS: 'A1AT7YVPFBWXBL', // ES
+	A1VC38T7YXB528: 'AN1VRQENFRJN5', // JP
+};
+
+/**
+ * Other Amazon-owned seller programs that show up on listings. These are
+ * NOT Amazon Retail — they're separate sub-brands selling used / open-box
+ * inventory — but they ARE Amazon-controlled and carry the Amazon trust
+ * halo, so threat scoring needs to flag them differently than a random 3P.
+ */
+const AMAZON_OWNED_SELLER_IDS: Record<string, 'amazon-warehouse-deals' | 'amazon-resale'> = {
+	A2R2RITDJNW1Q6: 'amazon-warehouse-deals', // Amazon Warehouse Deals (AWD) — used/open-box
+	A2L77EE7U53NWQ: 'amazon-resale', // Amazon Resale (rebrand of AWD in some markets)
+};
+
+function classifyAmazonSeller(
+	sellerId: string | null,
+	marketplaceId: string
+): {
+	isAmazon: boolean;
+	isAmazonOwned: boolean;
+	amazonSellerType: SellerOffer['amazonSellerType'];
+} {
+	if (!sellerId) return { isAmazon: false, isAmazonOwned: false, amazonSellerType: null };
+
+	const retailId = AMAZON_RETAIL_SELLER_IDS[marketplaceId];
+	if (retailId && sellerId === retailId) {
+		return { isAmazon: true, isAmazonOwned: true, amazonSellerType: 'amazon-retail' };
+	}
+
+	const ownedType = AMAZON_OWNED_SELLER_IDS[sellerId];
+	if (ownedType) {
+		return { isAmazon: false, isAmazonOwned: true, amazonSellerType: ownedType };
+	}
+
+	return { isAmazon: false, isAmazonOwned: false, amazonSellerType: null };
+}
+
+/**
+ * Extracts the per-seller offer list and listing-level aggregate metrics
+ * from a Product Pricing v0 offers payload.
+ *
+ * Note: SP-API caps the offer list at ~20 entries; treat counts as
+ * "active offers visible to us" rather than a true global total. Use the
+ * payload's Summary.TotalOfferCount when present for the wider count.
+ */
+function extractCompetition(offersPayload: any, marketplaceId: string): CompetitionData {
+	const rawOffers: any[] = Array.isArray(offersPayload?.Offers) ? offersPayload.Offers : [];
+	const sellers: SellerOffer[] = rawOffers.map((offer) => normalizeSellerOffer(offer, marketplaceId));
+
+	const fbaSellerCount = sellers.filter((s) => s.isFulfilledByAmazon).length;
+	const fbmSellerCount = sellers.filter((s) => !s.isFulfilledByAmazon).length;
+	const newConditionCount = sellers.filter(
+		(s) => s.condition !== null && s.condition.toLowerCase() === 'new'
+	).length;
+
+	const amazonOffers = sellers.filter((s) => s.isAmazon);
+	const amazonIsSelling = amazonOffers.length > 0;
+	const amazonIsBuyBoxWinner = amazonOffers.some((s) => s.isBuyBoxWinner);
+
+	const buyBoxWinner = sellers.find((s) => s.isBuyBoxWinner) ?? null;
+	const buyBoxPrice =
+		readMoney(offersPayload?.Summary?.BuyBoxPrices?.[0]?.ListingPrice) ??
+		buyBoxWinner?.landedPrice ??
+		null;
+	const buyBoxSellerId = buyBoxWinner?.sellerId ?? null;
+
+	const lowestFbaPrice = lowestLandedPrice(sellers.filter((s) => s.isFulfilledByAmazon));
+	const lowestFbmPrice = lowestLandedPrice(sellers.filter((s) => !s.isFulfilledByAmazon));
+
+	const landedAmounts = sellers
+		.map((s) => s.landedPrice?.amount)
+		.filter((v): v is number => typeof v === 'number');
+	const priceSpread =
+		landedAmounts.length >= 2
+			? Math.max(...landedAmounts) - Math.min(...landedAmounts)
+			: null;
+
+	const ratings = sellers
+		.map((s) => s.feedbackRating)
+		.filter((v): v is number => typeof v === 'number');
+	const averageFeedbackRating =
+		ratings.length > 0 ? ratings.reduce((a, b) => a + b, 0) / ratings.length : null;
+
+	const summaryTotal =
+		typeof offersPayload?.Summary?.TotalOfferCount === 'number'
+			? offersPayload.Summary.TotalOfferCount
+			: null;
+
+	return {
+		sellers,
+		aggregate: {
+			totalSellerCount: summaryTotal ?? sellers.length,
+			fbaSellerCount,
+			fbmSellerCount,
+			newConditionCount,
+			amazonIsSelling,
+			amazonIsBuyBoxWinner,
+			buyBoxPrice,
+			buyBoxSellerId,
+			lowestFbaPrice,
+			lowestFbmPrice,
+			priceSpread,
+			averageFeedbackRating,
+		},
+	};
+}
+
+function normalizeSellerOffer(offer: any, marketplaceId: string): SellerOffer {
+	const sellerId = typeof offer?.SellerId === 'string' ? offer.SellerId : null;
+	const listingPrice = readMoney(offer?.ListingPrice);
+	const shippingPrice = readMoney(offer?.Shipping);
+	const landedPrice =
+		listingPrice
+			? {
+					amount: listingPrice.amount + (shippingPrice?.amount ?? 0),
+					currency: listingPrice.currency,
+				}
+			: null;
+
+	const feedback = offer?.SellerFeedbackRating;
+	const shipsFromCountry = typeof offer?.ShipsFrom?.Country === 'string' ? offer.ShipsFrom.Country : null;
+	const shipsFromState = typeof offer?.ShipsFrom?.State === 'string' ? offer.ShipsFrom.State : null;
+	const shipsFrom = shipsFromState
+		? `${shipsFromState}${shipsFromCountry ? `, ${shipsFromCountry}` : ''}`
+		: shipsFromCountry;
+
+	const amazonClassification = classifyAmazonSeller(sellerId, marketplaceId);
+
+	return {
+		sellerId,
+		isAmazon: amazonClassification.isAmazon,
+		isAmazonOwned: amazonClassification.isAmazonOwned,
+		amazonSellerType: amazonClassification.amazonSellerType,
+		isFulfilledByAmazon: offer?.IsFulfilledByAmazon === true,
+		isBuyBoxWinner: offer?.IsBuyBoxWinner === true,
+		isFeaturedMerchant: offer?.IsFeaturedMerchant === true,
+		isPrimeEligible: offer?.PrimeInformation?.IsOfferPrime === true,
+		condition: typeof offer?.SubCondition === 'string' ? offer.SubCondition : null,
+		listingPrice,
+		shippingPrice,
+		landedPrice,
+		feedbackRating:
+			typeof feedback?.SellerPositiveFeedbackRating === 'number'
+				? feedback.SellerPositiveFeedbackRating
+				: null,
+		feedbackCount: typeof feedback?.FeedbackCount === 'number' ? feedback.FeedbackCount : null,
+		shipsFrom,
+	};
+}
+
+function lowestLandedPrice(sellers: SellerOffer[]): Money | null {
+	let best: Money | null = null;
+	for (const s of sellers) {
+		if (!s.landedPrice) continue;
+		if (best === null || s.landedPrice.amount < best.amount) best = s.landedPrice;
+	}
+	return best;
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -671,41 +843,136 @@ function estimateCategoryFee(summary: any, price: Money | null): CategoryFeeEsti
 }
 
 /**
- * Preferred path: ask SP-API for the authoritative referral fee for this ASIN
- * at the given price, then back-calculate the rate. Falls back to the local
- * category map if SP-API doesn't return a usable referral fee.
+ * Preferred path: ask SP-API for the authoritative referral fee AND FBA
+ * fulfillment fee for this ASIN at the given price in a single call. Falls
+ * back to the local category map for the referral fee if SP-API doesn't
+ * return a usable value; the FBA fee has no fallback (returns null).
  */
-async function resolveCategoryFee(args: {
+async function resolveCombinedFees(args: {
 	asin: string;
 	marketplaceId: string;
 	summary: any;
 	price: Money | null;
-}): Promise<CategoryFeeEstimate> {
-	const fallback = estimateCategoryFee(args.summary, args.price);
+	dimensions: PackageDimensions;
+}): Promise<{ categoryFee: CategoryFeeEstimate; fulfillmentFee: FulfillmentFeeEstimate }> {
+	const categoryFallback = estimateCategoryFee(args.summary, args.price);
 
-	if (!args.price || args.price.amount <= 0) return fallback;
+	if (!args.price || args.price.amount <= 0) {
+		return {
+			categoryFee: categoryFallback,
+			fulfillmentFee: estimateFulfillmentFeeFromRateCard(args.dimensions),
+		};
+	}
 
 	try {
-		const live = await amazonFeesService.getReferralFeeForAsin({
+		const live = await amazonFeesService.getCombinedFeesForAsin({
 			asin: args.asin,
 			price: args.price.amount,
 			currency: args.price.currency,
 			marketplaceId: args.marketplaceId,
+			isAmazonFulfilled: true,
 		});
 
-		if (live.referralFee !== null && live.referralRate !== null) {
-			return {
-				category: fallback.category,
-				rate: round4(live.referralRate),
-				amount: round2(live.referralFee),
-				source: 'sp-api',
-			};
-		}
+		const categoryFee: CategoryFeeEstimate =
+			live.referralFee !== null && live.referralRate !== null
+				? {
+						category: categoryFallback.category,
+						rate: round4(live.referralRate),
+						amount: round2(live.referralFee),
+						source: 'sp-api',
+					}
+				: categoryFallback;
+
+		const fulfillmentFee: FulfillmentFeeEstimate =
+			live.fulfillmentFee !== null
+				? { amount: round2(live.fulfillmentFee), source: 'sp-api' }
+				: estimateFulfillmentFeeFromRateCard(args.dimensions);
+
+		return { categoryFee, fulfillmentFee };
 	} catch {
-		// Swallow — fall back to the static map.
+		return {
+			categoryFee: categoryFallback,
+			fulfillmentFee: estimateFulfillmentFeeFromRateCard(args.dimensions),
+		};
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// FBA fulfillment fee fallback (rate-card estimate)
+// ─────────────────────────────────────────────────────────────────────
+
+/**
+ * US FBA Fulfillment Fee rate card (2024) — used ONLY when SP-API doesn't
+ * return a `FBAFees` line for the ASIN (which happens when Amazon doesn't
+ * have current package dimensions on file). Numbers are reasonable
+ * estimates; the live SP-API value should always be preferred.
+ *
+ * Buckets are by size tier and weight band. Sources: Amazon Seller Central
+ * "FBA fulfillment fees" published rate card, US, 2024.
+ */
+const FBA_FEE_RATE_CARD = {
+	smallStandard: [
+		{ maxLb: 4 / 16, fee: 3.06 },   // ≤ 4 oz
+		{ maxLb: 8 / 16, fee: 3.15 },   // ≤ 8 oz
+		{ maxLb: 12 / 16, fee: 3.24 },  // ≤ 12 oz
+		{ maxLb: 16 / 16, fee: 3.43 },  // ≤ 16 oz
+	],
+	largeStandard: [
+		{ maxLb: 4 / 16, fee: 3.68 },   // ≤ 4 oz
+		{ maxLb: 8 / 16, fee: 3.90 },   // ≤ 8 oz
+		{ maxLb: 12 / 16, fee: 4.15 },  // ≤ 12 oz
+		{ maxLb: 16 / 16, fee: 4.55 },  // ≤ 16 oz (1 lb)
+		{ maxLb: 1.5, fee: 4.99 },
+		{ maxLb: 2.0, fee: 5.37 },
+		{ maxLb: 2.5, fee: 5.52 },
+		{ maxLb: 3.0, fee: 5.77 },
+	],
+	oversize: [
+		{ maxLb: 1.0, fee: 9.61 },
+		{ maxLb: 2.0, fee: 10.67 },
+		{ maxLb: 5.0, fee: 12.13 },
+		{ maxLb: 12.0, fee: 14.45 },
+	],
+} as const;
+
+/** True for "small standard" — the cheapest FBA tier. */
+function isSmallStandard(d: PackageDimensions): boolean {
+	if (d.lengthIn === null || d.widthIn === null || d.heightIn === null) return false;
+	const sides = [d.lengthIn, d.widthIn, d.heightIn].sort((a, b) => b - a);
+	const [longest, median, shortest] = sides as [number, number, number];
+	const weight = d.weightLb ?? 0;
+	return longest <= 15 && median <= 12 && shortest <= 0.75 && weight <= 1;
+}
+
+function estimateFulfillmentFeeFromRateCard(
+	dimensions: PackageDimensions
+): FulfillmentFeeEstimate {
+	const weight = dimensions.weightLb;
+	if (weight === null || !Number.isFinite(weight) || weight <= 0) {
+		return { amount: null, source: 'unavailable' };
 	}
 
-	return fallback;
+	const sizeTier = classifySizeTier(dimensions);
+	if (sizeTier === 'unknown') return { amount: null, source: 'unavailable' };
+
+	const table =
+		sizeTier === 'oversize'
+			? FBA_FEE_RATE_CARD.oversize
+			: isSmallStandard(dimensions)
+				? FBA_FEE_RATE_CARD.smallStandard
+				: FBA_FEE_RATE_CARD.largeStandard;
+
+	for (const band of table) {
+		if (weight <= band.maxLb) {
+			return { amount: band.fee, source: 'rate-card' };
+		}
+	}
+
+	// Above the heaviest band — use the top band as a floor (over-3lb large
+	// standard adds $0.16 per 4oz, oversize adds per-lb above 12 lb; we
+	// approximate by returning the heaviest band).
+	const last = table[table.length - 1]!;
+	return { amount: last.fee, source: 'rate-card' };
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -714,20 +981,20 @@ async function resolveCategoryFee(args: {
 
 /**
  * FBA Monthly Inventory Storage Fees (US, 2024).
- *   - Standard-size: Jan–Sep $0.87 / ft³, Oct–Dec $2.40 / ft³
- *   - Oversize:      Jan–Sep $0.56 / ft³, Oct–Dec $1.40 / ft³
+ *   - Standard-size: Jan\u2013Sep $0.87 / ft\u00b3, Oct\u2013Dec $2.40 / ft\u00b3
+ *   - Oversize:      Jan\u2013Sep $0.56 / ft\u00b3, Oct\u2013Dec $1.40 / ft\u00b3
  *
  * Standard-size definition (simplified):
- *   Longest side ≤ 18", median side ≤ 14", shortest side ≤ 8",
- *   and unit weight ≤ 20 lb.
+ *   Longest side \u2264 18", median side \u2264 14", shortest side \u2264 8",
+ *   and unit weight \u2264 20 lb.
  */
 const STORAGE_RATES = {
 	standard: { 'jan-sep': 0.87, 'oct-dec': 2.40 },
 	oversize: { 'jan-sep': 0.56, 'oct-dec': 1.40 },
 } as const;
 
-function currentStorageSeason(now: Date = new Date()): 'jan-sep' | 'oct-dec' {
-	const month = now.getUTCMonth(); // 0-indexed
+function currentStorageSeason(now: Date = new Date()): StorageSeason {
+	const month = now.getUTCMonth(); // 0-indexed: 9 = Oct
 	return month >= 9 ? 'oct-dec' : 'jan-sep';
 }
 
@@ -754,15 +1021,30 @@ function estimateMonthlyStorageFee(dimensions: PackageDimensions): StorageFeeEst
 	const season = currentStorageSeason();
 
 	if (sizeTier === 'unknown' || dimensions.cubicFeet === null) {
-		return { sizeTier, season, ratePerCubicFoot: null, monthlyFee: null };
+		return {
+			sizeTier,
+			season,
+			ratePerCubicFoot: null,
+			monthlyFee: null,
+			seasonalRates: null,
+			seasonalMonthlyFees: null,
+		};
 	}
 
-	const ratePerCubicFoot = STORAGE_RATES[sizeTier][season];
+	const rates = STORAGE_RATES[sizeTier];
+	const cubicFeet = dimensions.cubicFeet;
+	const seasonalMonthlyFees = {
+		'jan-sep': round2(rates['jan-sep'] * cubicFeet),
+		'oct-dec': round2(rates['oct-dec'] * cubicFeet),
+	};
+
 	return {
 		sizeTier,
 		season,
-		ratePerCubicFoot,
-		monthlyFee: round2(ratePerCubicFoot * dimensions.cubicFeet),
+		ratePerCubicFoot: rates[season],
+		monthlyFee: seasonalMonthlyFees[season],
+		seasonalRates: { 'jan-sep': rates['jan-sep'], 'oct-dec': rates['oct-dec'] },
+		seasonalMonthlyFees,
 	};
 }
 

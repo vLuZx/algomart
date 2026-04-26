@@ -1,7 +1,7 @@
 /**
  * Global error handling middleware
  */
-export function errorHandler(error, req, res, next) {
+export function errorHandler(error, req, res) {
     console.error('Error:', {
         message: error.message,
         stack: error.stack,

@@ -5,7 +5,7 @@ import amazonClient from './client.service.js';
  * Currently only exposes the single endpoint used by statistics.service.
  */
 
-export type GetItemOffersParams = {
+type GetItemOffersParams = {
 	marketplaceId?: string;
 	itemCondition?: string;
 	customerType?: string;

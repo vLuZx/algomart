@@ -1,8 +1,8 @@
-import type { Request, Response, NextFunction } from 'express';
+import type { Request, Response } from 'express';
 /**
  * Global error handling middleware
  */
-export declare function errorHandler(error: any, req: Request, res: Response, next: NextFunction): void;
+export declare function errorHandler(error: any, req: Request, res: Response): void;
 /**
  * 404 Not Found handler
  */

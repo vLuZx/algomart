@@ -36,15 +36,27 @@ type FeesEstimate = {
 	error?: string;
 };
 
-export type ReferralFeeResult = {
+/**
+ * A single fees-estimate call returns BOTH the referral fee and the
+ * FBA fulfillment fee (pick & pack). Splitting them at this layer is
+ * essential — they're distinct line items on the FBA Revenue Calculator
+ * and confusing them was the source of a long-running profit bug.
+ */
+export type CombinedFeesResult = {
 	asin: string;
 	marketplaceId: string;
 	currency: string;
 	listingPrice: number;
-	/** Dollar amount of the Amazon referral fee for this ASIN at `listingPrice`. */
+	/** Amazon's commission. Read from FeeDetailList[type='ReferralFee']. */
 	referralFee: number | null;
-	/** Decimal rate (e.g. 0.15 for 15%) = referralFee / listingPrice. Null if unavailable. */
 	referralRate: number | null;
+	/**
+	 * Amazon's pick-and-pack/fulfillment fee. Sum of any FBA-related top-level
+	 * entries (FBAFees / FulfillmentFees / FBAPickAndPack), since SP-API
+	 * sometimes reports the parent and sometimes the children.
+	 */
+	fulfillmentFee: number | null;
+	totalFees: number | null;
 	status: string | null;
 	error?: string;
 };
@@ -123,39 +135,29 @@ class AmazonFeesService {
 	}
 
 	/**
-	 * Fetch the Amazon referral fee (and derived rate) for a specific ASIN.
-	 *
-	 * NOTE: The SP-API does NOT expose a "list categories with their fee rates"
-	 * endpoint. The only authoritative way to get the referral rate Amazon will
-	 * charge for an ASIN is to request a fees estimate and read the
-	 * `ReferralFee` entry from the returned `FeeDetailList`. The derived rate
-	 * is simply `referralFee / listingPrice`.
-	 *
-	 * This is more accurate than a hardcoded category→rate map because Amazon
-	 * applies tiered rates, category-specific minimums, and promotional
-	 * adjustments that a static table cannot capture.
+	 * Single-call helper that returns BOTH the referral fee and the FBA
+	 * fulfillment fee for an ASIN at a given listing price. The two fees
+	 * are distinct Amazon line items and must be tracked separately for
+	 * profit math.
 	 */
-	async getReferralFeeForAsin(params: {
+	async getCombinedFeesForAsin(params: {
 		asin: string;
 		price: number;
 		currency?: string;
 		marketplaceId?: string;
 		isAmazonFulfilled?: boolean;
-	}): Promise<ReferralFeeResult> {
+	}): Promise<CombinedFeesResult> {
 		const estimateParams: GetFeesEstimateParams = {
 			asin: params.asin,
 			price: params.price,
+			isAmazonFulfilled: params.isAmazonFulfilled ?? true,
 		};
 		if (params.currency !== undefined) estimateParams.currency = params.currency;
 		if (params.marketplaceId !== undefined) estimateParams.marketplaceId = params.marketplaceId;
-		if (params.isAmazonFulfilled !== undefined)
-			estimateParams.isAmazonFulfilled = params.isAmazonFulfilled;
 
 		const estimate = await this.getFeesEstimateForAsin(estimateParams);
 
-		const referralEntry = estimate.feeBreakdown.find(
-			(entry) => entry.type === 'ReferralFee'
-		);
+		const referralEntry = estimate.feeBreakdown.find((e) => e.type === 'ReferralFee');
 		const referralFee =
 			referralEntry && Number.isFinite(referralEntry.amount) ? referralEntry.amount : null;
 		const referralRate =
@@ -163,13 +165,30 @@ class AmazonFeesService {
 				? referralFee / estimate.listingPrice
 				: null;
 
-		const result: ReferralFeeResult = {
+		// SP-API reports FBA fees under varying labels depending on the
+		// account / marketplace. Sum any of the recognized FBA-bucket types.
+		const FBA_FEE_TYPES = new Set([
+			'FBAFees',
+			'FBAPickAndPack',
+			'FulfillmentFees',
+			'FBAOrderHandling',
+			'FBAWeightHandling',
+		]);
+		let fulfillmentFee: number | null = null;
+		for (const entry of estimate.feeBreakdown) {
+			if (!FBA_FEE_TYPES.has(entry.type)) continue;
+			fulfillmentFee = (fulfillmentFee ?? 0) + entry.amount;
+		}
+
+		const result: CombinedFeesResult = {
 			asin: estimate.asin,
 			marketplaceId: estimate.marketplaceId,
 			currency: estimate.currency,
 			listingPrice: estimate.listingPrice,
 			referralFee,
 			referralRate,
+			fulfillmentFee,
+			totalFees: estimate.totalFees,
 			status: estimate.status,
 		};
 		if (estimate.error) result.error = estimate.error;
@@ -205,7 +224,23 @@ class AmazonFeesService {
 				: currency;
 
 		const detailList: any[] = Array.isArray(estimate?.FeeDetailList) ? estimate.FeeDetailList : [];
-		const feeBreakdown = detailList
+
+		// SP-API returns a tree: each top-level entry can carry an
+		// `IncludedFeeDetailList` of child fees (e.g. FBA fulfillment is
+		// often reported as a child of the variable-closing/per-item entry).
+		// Flatten the tree so callers see every fee line item, parent + child.
+		const flatDetails: any[] = [];
+		const walk = (entries: any[]): void => {
+			for (const detail of entries) {
+				if (!detail || typeof detail !== 'object') continue;
+				flatDetails.push(detail);
+				const nested = detail.IncludedFeeDetailList;
+				if (Array.isArray(nested) && nested.length > 0) walk(nested);
+			}
+		};
+		walk(detailList);
+
+		const feeBreakdown = flatDetails
 			.map((detail) => ({
 				type: typeof detail?.FeeType === 'string' ? detail.FeeType : 'Unknown',
 				amount: typeof detail?.FinalFee?.Amount === 'number' ? detail.FinalFee.Amount : 0,
