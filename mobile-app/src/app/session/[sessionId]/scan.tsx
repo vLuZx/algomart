@@ -23,7 +23,7 @@ import {
   type ScannedObject,
   type ScannedObjectType,
 } from 'react-native-vision-camera';
-import { ChevronLeft, DollarSign, ScanLine, X } from 'lucide-react-native';
+import { ChevronLeft, DollarSign, Package, ScanLine, X } from 'lucide-react-native';
 import { GradientButton } from '../../../components/GradientButton';
 import { colors, font, radius, shadows } from '../../../constants/theme';
 import { lookupByBarcode } from '../../../services/product.service';
@@ -50,6 +50,7 @@ function getRouteParam(value: string | string[] | undefined) {
 function buildScannedInput(
   lookup: ProductLookupResult,
   foundPrice: number,
+  estimatedQuantity: number,
   scan: { barcode: string; barcodeType: string },
 ): ScannedProductInput {
   // All enrichment (including amazonFees) comes from the single
@@ -65,6 +66,7 @@ function buildScannedInput(
     price: lookup.price ?? foundPrice,
     sellerPopularity: 'Medium',
     foundPrice,
+    estimatedQuantity,
     barcode: scan.barcode,
     barcodeType: scan.barcodeType,
     ...(lookup.dimensions ? { dimensions: lookup.dimensions } : {}),
@@ -89,10 +91,23 @@ export default function ScanScreen() {
   const [lookupResult, setLookupResult] = useState<ProductLookupResult | null>(null);
   const [scannedCode, setScannedCode] = useState<{ barcode: string; barcodeType: string } | null>(null);
   const [foundPriceText, setFoundPriceText] = useState('');
+  const [estimatedQuantityText, setEstimatedQuantityText] = useState('1');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const lastBarcodeRef = useRef<string | null>(null);
   const inFlightRef = useRef(false);
+  /**
+   * Cache successful lookups for the lifetime of this scan screen so that
+   * repeatedly scanning the same barcode (the camera fires the callback
+   * many times per second) does NOT re-hit the API. Errors intentionally
+   * are NOT cached so the user can retry a transient failure.
+   */
+  const lookupCacheRef = useRef<Map<string, ProductLookupResult>>(new Map());
+  /** Cooldown window after a successful scan during which the same
+   * barcode is silently ignored, preventing rapid-fire duplicates from
+   * the camera even after the modal closes. */
+  const scanCooldownRef = useRef<{ barcode: string; until: number } | null>(null);
+  const SCAN_COOLDOWN_MS = 3000;
 
   // Request permission on mount
   useEffect(() => {
@@ -104,9 +119,13 @@ export default function ScanScreen() {
   const resetScan = useCallback(() => {
     lastBarcodeRef.current = null;
     inFlightRef.current = false;
+    // Clear cooldown so a user-initiated Retry can immediately rescan
+    // the same code that just failed.
+    scanCooldownRef.current = null;
     setLookupResult(null);
     setScannedCode(null);
     setFoundPriceText('');
+    setEstimatedQuantityText('1');
     setErrorMessage(null);
     setIsLookingUp(false);
     setIsConfirming(false);
@@ -117,20 +136,36 @@ export default function ScanScreen() {
     if (!barcode || inFlightRef.current) return;
     if (lastBarcodeRef.current === barcode) return;
 
+    // Suppress repeats within the cooldown window (camera spams the same
+    // barcode many times per second).
+    const cooldown = scanCooldownRef.current;
+    if (cooldown && cooldown.barcode === barcode && Date.now() < cooldown.until) {
+      return;
+    }
+
     lastBarcodeRef.current = barcode;
     inFlightRef.current = true;
     setIsLookingUp(true);
     setErrorMessage(null);
 
     try {
-      const result = await lookupByBarcode(barcode);
+      // Reuse cached lookups instead of re-hitting the API for a barcode
+      // we've already resolved on this screen.
+      const cached = lookupCacheRef.current.get(barcode);
+      const result = cached ?? (await lookupByBarcode(barcode));
+      if (!cached) lookupCacheRef.current.set(barcode, result);
+
+      scanCooldownRef.current = { barcode, until: Date.now() + SCAN_COOLDOWN_MS };
       setScannedCode({ barcode, barcodeType });
       setLookupResult(result);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Product lookup failed.';
       setErrorMessage(message);
-      // Allow the same barcode to be rescanned after an error
-      lastBarcodeRef.current = null;
+      // Hold the cooldown for failed lookups too so the camera doesn't
+      // spam the API with retries while the user is still pointed at the
+      // same (unresolvable) barcode. The user can press Retry, which calls
+      // resetScan() and clears the cooldown.
+      scanCooldownRef.current = { barcode, until: Date.now() + SCAN_COOLDOWN_MS };
     } finally {
       inFlightRef.current = false;
       setIsLookingUp(false);
@@ -162,13 +197,20 @@ export default function ScanScreen() {
     return Number.isFinite(value) && value > 0 ? value : null;
   }, [foundPriceText]);
 
+  const parsedEstimatedQuantity = useMemo(() => {
+    const normalized = estimatedQuantityText.trim();
+    if (!normalized) return null;
+    const value = Number.parseInt(normalized, 10);
+    return Number.isFinite(value) && value > 0 ? value : null;
+  }, [estimatedQuantityText]);
+
   const handleConfirm = useCallback(() => {
-    if (!sessionId || !lookupResult || parsedFoundPrice === null || !scannedCode) return;
+    if (!sessionId || !lookupResult || parsedFoundPrice === null || parsedEstimatedQuantity === null || !scannedCode) return;
     if (isConfirming) return;
 
     setIsConfirming(true);
     try {
-      const input = buildScannedInput(lookupResult, parsedFoundPrice, scannedCode);
+      const input = buildScannedInput(lookupResult, parsedFoundPrice, parsedEstimatedQuantity, scannedCode);
       console.debug('[Scan] confirm: lookupResult.price =', lookupResult.price);
       console.debug('[Scan] confirm: parsedFoundPrice =', parsedFoundPrice);
       console.debug('[Scan] confirm: input.price (→ Amazon Price) =', input.price);
@@ -186,6 +228,7 @@ export default function ScanScreen() {
     sessionId,
     lookupResult,
     parsedFoundPrice,
+    parsedEstimatedQuantity,
     scannedCode,
     isConfirming,
     addScannedProduct,
@@ -338,6 +381,20 @@ export default function ScanScreen() {
                   keyboardType="decimal-pad"
                   style={styles.input}
                   autoFocus
+                  returnKeyType="next"
+                />
+              </View>
+
+              <Text style={styles.inputLabel}>Estimated Quantity</Text>
+              <View style={styles.inputWrap}>
+                <Package size={18} color={colors.textSubtle} strokeWidth={2.2} />
+                <TextInput
+                  value={estimatedQuantityText}
+                  onChangeText={setEstimatedQuantityText}
+                  placeholder="1"
+                  placeholderTextColor={colors.textSubtle}
+                  keyboardType="number-pad"
+                  style={styles.input}
                   returnKeyType="done"
                   onSubmitEditing={handleConfirm}
                 />
@@ -346,7 +403,7 @@ export default function ScanScreen() {
               <GradientButton
                 label="Confirm"
                 onPress={handleConfirm}
-                disabled={parsedFoundPrice === null || isConfirming}
+                disabled={parsedFoundPrice === null || parsedEstimatedQuantity === null || isConfirming}
                 style={styles.confirmButton}
               />
             </SafeAreaView>

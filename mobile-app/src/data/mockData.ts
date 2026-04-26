@@ -61,6 +61,7 @@ export function createScannedProduct(
     weight: input.weight ?? '',
     restrictions: input.restrictions ?? [],
     monthlySalesEstimate: input.monthlySalesEstimate ?? 0,
+    estimatedQuantity: input.estimatedQuantity ?? 1,
   };
 }
 

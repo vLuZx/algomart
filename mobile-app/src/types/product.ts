@@ -27,6 +27,7 @@ export interface SessionProduct {
   weight: string;
   restrictions: string[];
   monthlySalesEstimate: number;
+  estimatedQuantity: number;
 }
 
 export interface ScannerSeedProduct {
@@ -41,6 +42,7 @@ export interface ScannerSeedProduct {
 
 export interface ScannedProductInput extends ScannerSeedProduct {
   foundPrice: number;
+  estimatedQuantity?: number;
   // Optional enrichment sourced from the aggregated insights endpoint.
   barcode?: string;
   barcodeType?: string;

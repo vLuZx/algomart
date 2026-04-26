@@ -101,3 +101,86 @@ export interface ProductLookupResult {
   amazonFees: number | null;
   feeBreakdown: FeesEstimateBreakdownItem[];
 }
+
+// --- GET /api/calculations/product ---
+
+export interface ProductCalculationProfit {
+  netProfitPerUnit: number | null;
+  netProfitTotal: number | null;
+  roi: number | null;
+  marginPercentage: number | null;
+  totalFeesPerUnit: number | null;
+  error?: string;
+  message?: string;
+}
+
+export interface ProductCalculationComputed {
+  amazonPrice: number;
+  costOfGoodsPerUnit: number | null;
+  referralFee: number;
+  fbaFee: number;
+  inboundFee: number;
+  shippingFee: number;
+  monthlyStorageFee: number;
+  removalFeePerUnit: number;
+  disposalFeePerUnit: number;
+  profit: ProductCalculationProfit;
+}
+
+export interface BuySignalBreakdownComponent {
+  score: number;
+  max: number;
+  details: string;
+}
+
+export interface BuySignalRiskPenalties {
+  score: number;
+  details: string[];
+}
+
+export interface ProductBuySignal {
+  score: number;
+  breakdown: {
+    profitability: BuySignalBreakdownComponent;
+    velocity: BuySignalBreakdownComponent;
+    competition: BuySignalBreakdownComponent;
+    riskPenalties: BuySignalRiskPenalties;
+  };
+}
+
+export interface ProductCalculationFetched {
+  sellerPopularity: number;
+  bsr: number;
+  dimensions: {
+    weight: number;
+    length: number;
+    width: number;
+    height: number;
+  };
+  inboundEligibility: {
+    isEligible: boolean;
+    reasons: string[];
+  };
+  competition: {
+    totalSellerCount: number;
+    fbaSellerCount: number;
+    fbmSellerCount: number;
+  };
+  salesEstimate: {
+    unitsPerMonth: number | null;
+    confidence: 'low' | 'medium' | 'high' | string;
+    daysToSellQuantity: number | null;
+  };
+}
+
+export interface ProductCalculation {
+  metadata: {
+    asin: string;
+    title: string;
+    category: string;
+    image: string;
+  };
+  computed: ProductCalculationComputed;
+  buySignal: ProductBuySignal;
+  fetched: ProductCalculationFetched;
+}

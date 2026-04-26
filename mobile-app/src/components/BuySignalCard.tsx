@@ -137,8 +137,11 @@ function computeWatch(p: ProductSignalData): WatchItem[] {
 
 // ── Component ────────────────────────────────────────────────────────────────
 
-export function BuySignalCard({ product }: Readonly<{ product: ProductSignalData }>) {
-  const score = computeScore(product);
+export function BuySignalCard({
+  product,
+  scoreOverride,
+}: Readonly<{ product: ProductSignalData; scoreOverride?: number }>) {
+  const score = typeof scoreOverride === 'number' ? scoreOverride : computeScore(product);
   const verdict = getVerdict(score);
   const watchItems = computeWatch(product);
 

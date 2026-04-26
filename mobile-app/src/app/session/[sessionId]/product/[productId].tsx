@@ -1,4 +1,6 @@
+import { useEffect, useState } from 'react';
 import {
+  ActivityIndicator,
   Platform,
   Pressable,
   ScrollView,
@@ -20,16 +22,15 @@ import {
   ScanBarcode,
 } from 'lucide-react-native';
 import { colors, font, radius, shadows } from '../../../../constants/theme';
-import { RatingStars } from '../../../../components/RatingStars';
 import { ImageWithFallback } from '../../../../components/ImageWithFallback';
 import { BuySignalCard } from '../../../../components/BuySignalCard';
 import { ProfitOutlookCard } from '../../../../components/ProfitOutlookCard';
 import { useSessions } from '../../../../store/sessions';
+import { fetchProductCalculation } from '../../../../services/product.service';
+import type { ProductCalculation } from '../../../../types/api';
 import type { CompetitionLevel, SellerPopularity } from '../../../../types/product';
 
-type PopularityLevel = SellerPopularity;
-
-const popularityCfg: Record<PopularityLevel, { color: string; bg: string; border: string }> = {
+const popularityCfg: Record<SellerPopularity, { color: string; bg: string; border: string }> = {
   Low: { color: '#f87171', bg: 'rgba(248, 113, 113, 0.10)', border: 'rgba(248, 113, 113, 0.20)' },
   Medium: { color: '#facc15', bg: 'rgba(250, 204, 21, 0.10)', border: 'rgba(250, 204, 21, 0.20)' },
   High: { color: '#34d399', bg: 'rgba(52, 211, 153, 0.10)', border: 'rgba(52, 211, 153, 0.20)' },
@@ -47,8 +48,42 @@ function getRouteParam(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value;
 }
 
-function marginColor(margin: number, foundPrice: number) {
-  const pct = (margin / foundPrice) * 100;
+function popularityFromScore(score: number): SellerPopularity {
+  if (score >= 5000) return 'Very High';
+  if (score >= 1000) return 'High';
+  if (score >= 200) return 'Medium';
+  return 'Low';
+}
+
+function competitionFromSellerCount(total: number): CompetitionLevel {
+  if (total >= 20) return 'Very High';
+  if (total >= 10) return 'High';
+  if (total >= 4) return 'Medium';
+  return 'Low';
+}
+
+function formatInches(value: number): string {
+  return `${value.toFixed(1)}"`;
+}
+
+function formatDimensions(d: ProductCalculation['fetched']['dimensions']): string {
+  if (!d.length && !d.width && !d.height) return '—';
+  return `${formatInches(d.length)} × ${formatInches(d.width)} × ${formatInches(d.height)}`;
+}
+
+/** Render a weight in pounds as `X lbs Y.Y oz` (e.g. 2.3 lb → `2 lbs 4.8 oz`). */
+function formatWeight(weightLb: number): string {
+  if (!weightLb) return '—';
+  const wholeLbs = Math.floor(weightLb);
+  const remainderOz = (weightLb - wholeLbs) * 16;
+  if (wholeLbs === 0) return `${remainderOz.toFixed(1)} oz`;
+  if (remainderOz < 0.05) return `${wholeLbs} lbs`;
+  return `${wholeLbs} lbs ${remainderOz.toFixed(1)} oz`;
+}
+
+function profitColor(profit: number | null, foundPrice: number) {
+  if (profit === null || foundPrice <= 0) return colors.textMuted;
+  const pct = (profit / foundPrice) * 100;
   if (pct > 15) return '#34d399';
   if (pct > 8) return '#facc15';
   return '#f87171';
@@ -61,6 +96,43 @@ export default function ProductDetailScreen() {
   const productId = getRouteParam(params.productId);
   const { getProduct } = useSessions();
   const product = sessionId && productId ? getProduct(sessionId, productId) : undefined;
+
+  const [calculation, setCalculation] = useState<ProductCalculation | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!product) return;
+    let cancelled = false;
+    setLoading(true);
+    setErrorMessage(null);
+
+    fetchProductCalculation({
+      barcode: product.barcode || undefined,
+      asin: product.asin,
+      foundPrice: product.foundPrice,
+      // foundPrice IS the per-unit COGS — the calculation API needs it
+      // explicitly to populate the profit block (otherwise it returns
+      // COGS_REQUIRED).
+      costOfGoods: product.foundPrice,
+      estimatedQuantity: product.estimatedQuantity,
+    })
+      .then((data) => {
+        if (!cancelled) setCalculation(data);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          setErrorMessage(err instanceof Error ? err.message : 'Failed to load calculation');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [product]);
 
   if (!sessionId || !productId || !product) {
     return (
@@ -75,10 +147,49 @@ export default function ProductDetailScreen() {
     );
   }
 
-  const profitC = marginColor(product.profitMargin, product.foundPrice);
-  const profitPct = ((product.profitMargin / product.foundPrice) * 100).toFixed(1);
-  const popCfg = popularityCfg[product.sellerPopularity];
-  const compCfg = competitionCfg[product.competitionLevel];
+  if (loading || !calculation) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <StatusBar barStyle="light-content" backgroundColor={colors.bg} />
+        <View style={styles.header}>
+          <View style={styles.headerRow}>
+            <Pressable style={styles.backButton} onPress={() => router.replace(`/session/${sessionId}`)}>
+              <ChevronLeft size={20} color={colors.textMuted} strokeWidth={2.2} />
+            </Pressable>
+            <Text style={styles.headerTitle}>Product Details</Text>
+          </View>
+        </View>
+        <View style={styles.loadingWrap}>
+          {errorMessage ? (
+            <>
+              <Text style={styles.fallbackTitle}>Couldn’t load calculation</Text>
+              <Text style={styles.fallbackSubtitle}>{errorMessage}</Text>
+            </>
+          ) : (
+            <>
+              <ActivityIndicator color={colors.accent} />
+              <Text style={styles.fallbackSubtitle}>Crunching numbers…</Text>
+            </>
+          )}
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  const { metadata, computed, buySignal, fetched } = calculation;
+  const profit = computed.profit;
+  const amazonFees = computed.referralFee + computed.fbaFee;
+  const profitC = profitColor(profit.netProfitPerUnit, product.foundPrice);
+  const profitPct =
+    typeof profit.marginPercentage === 'number' ? profit.marginPercentage.toFixed(1) : '—';
+
+  const popularity = popularityFromScore(fetched.sellerPopularity);
+  const competition = competitionFromSellerCount(fetched.competition.totalSellerCount);
+  const popCfg = popularityCfg[popularity];
+  const compCfg = competitionCfg[competition];
+
+  const inboundOk = fetched.inboundEligibility.isEligible;
+  const restrictions = fetched.inboundEligibility.reasons;
 
   return (
     <SafeAreaView style={styles.container}>
@@ -102,33 +213,27 @@ export default function ProductDetailScreen() {
             <View style={styles.productRow}>
               <View style={styles.thumbWrap}>
                 <ImageWithFallback
-                  source={{ uri: product.image }}
+                  source={{ uri: metadata.image }}
                   style={styles.thumb}
                 />
               </View>
               <View style={styles.productInfoWrap}>
                 <Text style={styles.productTitle} numberOfLines={2}>
-                  {product.title}
+                  {metadata.title}
                 </Text>
-                <View style={styles.ratingRow}>
-                  <RatingStars rating={product.rating} size={14} />
-                  <Text style={styles.ratingText}>
-                    {product.rating.toFixed(1)} · {product.reviewCount.toLocaleString()} reviews
-                  </Text>
-                </View>
                 <View style={styles.pillRow}>
                   <View style={styles.categoryPill}>
-                    <Text style={styles.categoryPillText}>{product.category}</Text>
+                    <Text style={styles.categoryPillText}>{metadata.category}</Text>
                   </View>
-                  {product.requiresApproval ? (
-                    <View style={styles.approvalPillWarn}>
-                      <AlertCircle size={10} color="#facc15" strokeWidth={2} />
-                      <Text style={styles.approvalPillWarnText}>Approval required</Text>
-                    </View>
-                  ) : (
+                  {inboundOk ? (
                     <View style={styles.approvalPillOk}>
                       <CheckCircle2 size={10} color="#34d399" strokeWidth={2} />
-                      <Text style={styles.approvalPillOkText}>Open to sell</Text>
+                      <Text style={styles.approvalPillOkText}>Inbound eligible</Text>
+                    </View>
+                  ) : (
+                    <View style={styles.approvalPillWarn}>
+                      <AlertCircle size={10} color="#facc15" strokeWidth={2} />
+                      <Text style={styles.approvalPillWarnText}>Inbound restricted</Text>
                     </View>
                   )}
                 </View>
@@ -140,12 +245,12 @@ export default function ProductDetailScreen() {
               <View style={styles.identifierCol}>
                 <Hash size={11} color={colors.textFaint} strokeWidth={2} />
                 <Text style={styles.identifierLabel}>ASIN</Text>
-                <Text style={styles.identifierValue}>{product.asin}</Text>
+                <Text style={styles.identifierValue}>{metadata.asin}</Text>
               </View>
               <View style={[styles.identifierCol, { justifyContent: 'flex-end' }]}>
                 <ScanBarcode size={11} color={colors.textFaint} strokeWidth={2} />
-                <Text style={styles.identifierLabel}>{product.barcodeType}</Text>
-                <Text style={styles.identifierValue}>{product.barcode}</Text>
+                <Text style={styles.identifierLabel}>{product.barcodeType || 'Barcode'}</Text>
+                <Text style={styles.identifierValue}>{product.barcode || '—'}</Text>
               </View>
             </View>
           </View>
@@ -153,16 +258,17 @@ export default function ProductDetailScreen() {
 
         {/* 2. Buy Signal */}
         <BuySignalCard
+          scoreOverride={buySignal.score}
           product={{
-            profitMargin: product.profitMargin,
+            profitMargin: profit.netProfitPerUnit ?? 0,
             foundPrice: product.foundPrice,
-            sellerPopularity: product.sellerPopularity,
-            competitionLevel: product.competitionLevel,
-            monthlySalesEstimate: product.monthlySalesEstimate,
-            requiresApproval: product.requiresApproval,
-            restrictions: product.restrictions,
-            category: product.category,
-            weight: product.weight,
+            sellerPopularity: popularity,
+            competitionLevel: competition,
+            monthlySalesEstimate: fetched.salesEstimate.unitsPerMonth ?? 0,
+            requiresApproval: !inboundOk,
+            restrictions,
+            category: metadata.category,
+            weight: formatWeight(fetched.dimensions.weight),
           }}
         />
 
@@ -184,7 +290,7 @@ export default function ProductDetailScreen() {
             <View style={styles.twoColumnGrid}>
               <View style={styles.metricTile}>
                 <Text style={styles.metricTileLabel}>Amazon Price</Text>
-                <Text style={styles.metricTileValue}>${product.price.toFixed(2)}</Text>
+                <Text style={styles.metricTileValue}>${computed.amazonPrice.toFixed(2)}</Text>
               </View>
               <View style={styles.metricTile}>
                 <Text style={styles.metricTileLabel}>Found Price</Text>
@@ -192,11 +298,19 @@ export default function ProductDetailScreen() {
               </View>
               <View style={styles.metricTile}>
                 <Text style={styles.metricTileLabel}>Est. Shipping</Text>
-                <Text style={styles.metricTileValue}>${product.estimatedShipping.toFixed(2)}</Text>
+                <Text style={styles.metricTileValue}>${computed.shippingFee.toFixed(2)}</Text>
               </View>
               <View style={styles.metricTile}>
                 <Text style={styles.metricTileLabel}>Amazon Fees</Text>
-                <Text style={styles.metricTileValue}>${product.amazonFees.toFixed(2)}</Text>
+                <Text style={styles.metricTileValue}>${amazonFees.toFixed(2)}</Text>
+              </View>
+              <View style={styles.metricTile}>
+                <Text style={styles.metricTileLabel}>Inbound Fee</Text>
+                <Text style={styles.metricTileValue}>${computed.inboundFee.toFixed(2)}</Text>
+              </View>
+              <View style={styles.metricTile}>
+                <Text style={styles.metricTileLabel}>Monthly Storage</Text>
+                <Text style={styles.metricTileValue}>${computed.monthlyStorageFee.toFixed(2)}</Text>
               </View>
             </View>
 
@@ -207,13 +321,18 @@ export default function ProductDetailScreen() {
               </View>
               <View style={styles.profitValueWrap}>
                 <Text style={[styles.profitValue, { color: profitC }]}>
-                  +${product.profitMargin.toFixed(2)}
+                  {profit.netProfitPerUnit !== null
+                    ? `${profit.netProfitPerUnit >= 0 ? '+' : '-'}$${Math.abs(profit.netProfitPerUnit).toFixed(2)}`
+                    : '—'}
                 </Text>
                 <Text style={[styles.profitPct, { color: profitC, opacity: 0.7 }]}>
                   {profitPct}% margin
                 </Text>
               </View>
             </View>
+            {profit.error ? (
+              <Text style={styles.profitErrorText}>{profit.message ?? profit.error}</Text>
+            ) : null}
           </View>
         </View>
 
@@ -234,7 +353,7 @@ export default function ProductDetailScreen() {
                 <Text style={styles.metricTileLabel}>Seller Popularity</Text>
                 <View style={[styles.stateBadge, { backgroundColor: popCfg.bg, borderColor: popCfg.border }]}>
                   <Text style={[styles.stateBadgeText, { color: popCfg.color }]}>
-                    {product.sellerPopularity}
+                    {popularity}
                   </Text>
                 </View>
               </View>
@@ -242,9 +361,12 @@ export default function ProductDetailScreen() {
                 <Text style={styles.metricTileLabel}>Competition</Text>
                 <View style={[styles.stateBadge, { backgroundColor: compCfg.bg, borderColor: compCfg.border }]}>
                   <Text style={[styles.stateBadgeText, { color: compCfg.color }]}>
-                    {product.competitionLevel}
+                    {competition}
                   </Text>
                 </View>
+                <Text style={styles.metricTileSub}>
+                  {fetched.competition.fbaSellerCount} FBA · {fetched.competition.fbmSellerCount} FBM
+                </Text>
               </View>
             </View>
 
@@ -253,15 +375,22 @@ export default function ProductDetailScreen() {
             <View style={styles.twoColumnGrid}>
               <View style={styles.metricTile}>
                 <Text style={styles.metricTileLabel}>Best Sellers Rank</Text>
-                <Text style={styles.metricTileValue}>#{product.bsr.toLocaleString()}</Text>
-                <Text style={styles.metricTileSub}>Cat. #{product.salesRank.toLocaleString()}</Text>
+                <Text style={styles.metricTileValue}>
+                  {fetched.bsr ? `#${fetched.bsr.toLocaleString()}` : '—'}
+                </Text>
               </View>
               <View style={styles.metricTile}>
                 <Text style={styles.metricTileLabel}>Monthly Sales</Text>
                 <Text style={[styles.metricTileValue, { color: '#34d399' }]}>
-                  ~{product.monthlySalesEstimate.toLocaleString()}
+                  {fetched.salesEstimate.unitsPerMonth !== null
+                    ? `~${fetched.salesEstimate.unitsPerMonth.toLocaleString()}`
+                    : '—'}
                 </Text>
-                <Text style={styles.metricTileSub}>units / month</Text>
+                <Text style={styles.metricTileSub}>
+                  {fetched.salesEstimate.daysToSellQuantity !== null
+                    ? `${fetched.salesEstimate.daysToSellQuantity} days to sell ${product.estimatedQuantity}`
+                    : `${fetched.salesEstimate.confidence} confidence`}
+                </Text>
               </View>
             </View>
           </View>
@@ -281,18 +410,22 @@ export default function ProductDetailScreen() {
             <View style={styles.specTable}>
               <View style={[styles.specRow, styles.specRowBorder]}>
                 <Text style={styles.specLabel}>Dimensions</Text>
-                <Text style={styles.specValue}>{product.dimensions}</Text>
+                <Text style={styles.specValue}>{formatDimensions(fetched.dimensions)}</Text>
+              </View>
+              <View style={[styles.specRow, styles.specRowBorder]}>
+                <Text style={styles.specLabel}>Weight</Text>
+                <Text style={styles.specValue}>{formatWeight(fetched.dimensions.weight)}</Text>
               </View>
               <View style={styles.specRow}>
-                <Text style={styles.specLabel}>Weight</Text>
-                <Text style={styles.specValue}>{product.weight}</Text>
+                <Text style={styles.specLabel}>Estimated Quantity</Text>
+                <Text style={styles.specValue}>{product.estimatedQuantity}</Text>
               </View>
             </View>
           </View>
         </View>
 
-        {/* 7. Restrictions */}
-        {product.restrictions.length > 0 && (
+        {/* 7. Inbound Restrictions */}
+        {restrictions.length > 0 && (
           <View style={styles.restrictionCard}>
             <View style={[styles.accentLine, { backgroundColor: 'rgba(250, 204, 21, 0.50)' }]} />
             <View style={styles.accentCardBody}>
@@ -300,16 +433,16 @@ export default function ProductDetailScreen() {
                 <View style={[styles.sectionIconWrap, { backgroundColor: 'rgba(250, 204, 21, 0.10)' }]}>
                   <AlertCircle size={14} color="#facc15" strokeWidth={2} />
                 </View>
-                <Text style={styles.sectionTitle}>Restrictions</Text>
+                <Text style={styles.sectionTitle}>Inbound Restrictions</Text>
               </View>
 
               <View style={styles.specTable}>
-                {product.restrictions.map((r, i) => (
+                {restrictions.map((r, i) => (
                   <View
                     key={r}
                     style={[
                       styles.restrictionRow,
-                      i < product.restrictions.length - 1 && styles.specRowBorder,
+                      i < restrictions.length - 1 && styles.specRowBorder,
                     ]}
                   >
                     <View style={styles.restrictionDot} />
@@ -641,6 +774,18 @@ const styles = StyleSheet.create({
     fontSize: font.sizeSm,
     marginTop: 8,
     textAlign: 'center',
+  },
+  loadingWrap: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+    paddingHorizontal: 24,
+  },
+  profitErrorText: {
+    marginTop: 12,
+    color: '#facc15',
+    fontSize: 11,
   },
   identifierRows: {
     flexDirection: 'row',

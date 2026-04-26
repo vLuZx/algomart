@@ -12,6 +12,7 @@ import type {
   FeesEstimate,
   FeesEstimateBreakdownItem,
   PricingResponse,
+  ProductCalculation,
   ProductInsightField,
   ProductInsightsBsr,
   ProductInsightsResponse,
@@ -80,6 +81,30 @@ export async function fetchFeesEstimate(
   if (typeof options?.shippingPrice === 'number') body.shippingPrice = options.shippingPrice;
 
   const { data } = await api.post<FeesEstimate>('/api/amazon/fees/estimate', body);
+  return data;
+}
+
+/**
+ * GET /api/calculations/product
+ * Aggregated profit / fees / buy-signal calculation for a single product.
+ */
+export async function fetchProductCalculation(params: {
+  barcode?: string;
+  asin?: string;
+  foundPrice: number;
+  estimatedQuantity?: number;
+  costOfGoods?: number;
+  marketplaceId?: string;
+}): Promise<ProductCalculation> {
+  const query: Record<string, string | number> = { foundPrice: params.foundPrice };
+  if (params.barcode) query.barcode = params.barcode;
+  if (typeof params.estimatedQuantity === 'number') query.estimatedQuantity = params.estimatedQuantity;
+  if (typeof params.costOfGoods === 'number') query.costOfGoods = params.costOfGoods;
+  if (params.marketplaceId) query.marketplaceId = params.marketplaceId;
+
+  const { data } = await api.get<ProductCalculation>('/api/calculations/product', {
+    params: query,
+  });
   return data;
 }
 
