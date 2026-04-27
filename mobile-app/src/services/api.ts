@@ -2,9 +2,24 @@ import axios from 'axios';
 import Constants from 'expo-constants';
 
 const SERVER_PORT = 3000;
+const PROD_BASE_URL = 'https://algomart-production.up.railway.app';
 
+/**
+ * Resolve the server base URL.
+ *
+ * Priority:
+ *   1. `extra.apiBaseUrl`   — explicit override from app.config.ts / env
+ *   2. `extra.serverHost`   — Metro packager host (LAN dev): http://HOST:3000
+ *   3. PROD_BASE_URL        — production Railway deployment
+ */
 function getBaseUrl(): string {
-  return 'https://algomart-production.up.railway.app';
+  const extra = (Constants.expoConfig?.extra ?? {}) as {
+    apiBaseUrl?: string | null;
+    serverHost?: string | null;
+  };
+  if (extra.apiBaseUrl) return extra.apiBaseUrl;
+  if (extra.serverHost) return `http://${extra.serverHost}:${SERVER_PORT}`;
+  return PROD_BASE_URL;
 }
 
 export const API_BASE_URL = getBaseUrl();

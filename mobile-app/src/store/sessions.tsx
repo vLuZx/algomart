@@ -34,7 +34,7 @@ interface SessionsContextValue {
   getSession: (id: string) => Session | undefined;
   getProducts: (sessionId: string) => SessionProduct[];
   getProduct: (sessionId: string, productId: string) => SessionProduct | undefined;
-  addSession: (title: string) => Promise<Session>;
+  addSession: (title: string) => Promise<Session | null>;
   deleteSession: (id: string) => Promise<void>;
   renameSession: (id: string, title: string) => Promise<void>;
   deleteProduct: (sessionId: string, productId: string) => Promise<void>;
@@ -87,51 +87,68 @@ export function SessionProvider({ children }: SessionProviderProps) {
     }
   }, []);
 
-  const addSession = useCallback(async (title: string): Promise<Session> => {
-    const session = await createSessionApi(title);
-    setState((prev) => ({
-      ...prev,
-      sessions: [session, ...prev.sessions],
-      productsBySession: { ...prev.productsBySession, [session.id]: [] },
-    }));
-    loadedProductsRef.current.add(session.id);
-    return session;
+  const addSession = useCallback(async (title: string): Promise<Session | null> => {
+    try {
+      const session = await createSessionApi(title);
+      setState((prev) => ({
+        ...prev,
+        sessions: [session, ...prev.sessions],
+        productsBySession: { ...prev.productsBySession, [session.id]: [] },
+      }));
+      loadedProductsRef.current.add(session.id);
+      return session;
+    } catch (error) {
+      console.warn('[sessions] addSession failed', error);
+      return null;
+    }
   }, []);
 
   const deleteSession = useCallback(async (id: string) => {
-    await deleteSessionApi(id);
-    loadedProductsRef.current.delete(id);
-    setState((prev) => {
-      const nextProducts = { ...prev.productsBySession };
-      delete nextProducts[id];
-      return {
-        sessions: prev.sessions.filter((s) => s.id !== id),
-        productsBySession: nextProducts,
-      };
-    });
+    try {
+      await deleteSessionApi(id);
+      loadedProductsRef.current.delete(id);
+      setState((prev) => {
+        const nextProducts = { ...prev.productsBySession };
+        delete nextProducts[id];
+        return {
+          sessions: prev.sessions.filter((s) => s.id !== id),
+          productsBySession: nextProducts,
+        };
+      });
+    } catch (error) {
+      console.warn('[sessions] deleteSession failed', error);
+    }
   }, []);
 
   const renameSession = useCallback(async (id: string, title: string) => {
-    const updated = await renameSessionApi(id, title);
-    setState((prev) => ({
-      ...prev,
-      sessions: prev.sessions.map((s) => (s.id === id ? { ...s, ...updated } : s)),
-    }));
+    try {
+      const updated = await renameSessionApi(id, title);
+      setState((prev) => ({
+        ...prev,
+        sessions: prev.sessions.map((s) => (s.id === id ? { ...s, ...updated } : s)),
+      }));
+    } catch (error) {
+      console.warn('[sessions] renameSession failed', error);
+    }
   }, []);
 
   const deleteProduct = useCallback(async (sessionId: string, productId: string) => {
-    await deleteSessionProductApi(sessionId, productId);
-    setState((prev) => {
-      const next = (prev.productsBySession[sessionId] ?? []).filter((p) => p.id !== productId);
-      return {
-        sessions: prev.sessions.map((s) =>
-          s.id === sessionId
-            ? { ...s, productCount: next.length, updatedAt: new Date().toISOString() }
-            : s,
-        ),
-        productsBySession: { ...prev.productsBySession, [sessionId]: next },
-      };
-    });
+    try {
+      await deleteSessionProductApi(sessionId, productId);
+      setState((prev) => {
+        const next = (prev.productsBySession[sessionId] ?? []).filter((p) => p.id !== productId);
+        return {
+          sessions: prev.sessions.map((s) =>
+            s.id === sessionId
+              ? { ...s, productCount: next.length, updatedAt: new Date().toISOString() }
+              : s,
+          ),
+          productsBySession: { ...prev.productsBySession, [sessionId]: next },
+        };
+      });
+    } catch (error) {
+      console.warn('[sessions] deleteProduct failed', error);
+    }
   }, []);
 
   const updateFoundPrice = useCallback(
@@ -141,25 +158,28 @@ export function SessionProvider({ children }: SessionProviderProps) {
       const projectedProfitMargin = target
         ? Math.max(0, target.price - foundPrice - target.amazonFees - target.estimatedShipping)
         : 0;
-
-      const updated = await updateProductFoundPriceApi(
-        sessionId,
-        productId,
-        foundPrice,
-        projectedProfitMargin,
-      );
-      setState((prev) => ({
-        ...prev,
-        productsBySession: {
-          ...prev.productsBySession,
-          [sessionId]: (prev.productsBySession[sessionId] ?? []).map((p) =>
-            p.id === productId ? updated : p,
+      try {
+        const updated = await updateProductFoundPriceApi(
+          sessionId,
+          productId,
+          foundPrice,
+          projectedProfitMargin,
+        );
+        setState((prev) => ({
+          ...prev,
+          productsBySession: {
+            ...prev.productsBySession,
+            [sessionId]: (prev.productsBySession[sessionId] ?? []).map((p) =>
+              p.id === productId ? updated : p,
+            ),
+          },
+          sessions: prev.sessions.map((s) =>
+            s.id === sessionId ? { ...s, updatedAt: new Date().toISOString() } : s,
           ),
-        },
-        sessions: prev.sessions.map((s) =>
-          s.id === sessionId ? { ...s, updatedAt: new Date().toISOString() } : s,
-        ),
-      }));
+        }));
+      } catch (error) {
+        console.warn('[sessions] updateFoundPrice failed', error);
+      }
     },
     [state.productsBySession],
   );
