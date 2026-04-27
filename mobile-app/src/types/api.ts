@@ -21,11 +21,8 @@ export interface ProductCalculationComputed {
   costOfGoodsPerUnit: number | null;
   referralFee: number;
   fbaFee: number;
-  inboundFee: number;
   shippingFee: number;
   monthlyStorageFee: number;
-  removalFeePerUnit: number;
-  disposalFeePerUnit: number;
   profit: ProductCalculationProfit;
 }
 

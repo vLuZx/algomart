@@ -221,8 +221,7 @@ export default function ScanScreen() {
     try {
       const calc = await fetchProductCalculation({
         barcode: scannedCode.barcode,
-        foundPrice: parsedFoundPrice,
-        // foundPrice is the per-unit COGS — the API needs it explicitly so
+        // foundPrice IS the per-unit COGS — the API needs it explicitly so
         // the profit block populates instead of returning COGS_REQUIRED.
         costOfGoods: parsedFoundPrice,
         estimatedQuantity: parsedEstimatedQuantity,
@@ -236,7 +235,7 @@ export default function ScanScreen() {
         return;
       }
       const input = buildScannedInput(calc as ProductCalculationFull, parsedFoundPrice, parsedEstimatedQuantity, scannedCode);
-      const product = addScannedProduct(sessionId, input);
+      const product = await addScannedProduct(sessionId, input);
       resetScan();
       router.replace(`/session/${sessionId}/product/${product.id}`);
     } catch (error) {

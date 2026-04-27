@@ -37,11 +37,6 @@ export type GetSingleProductStatisticsParams = {
 	/** Override the default marketplace (defaults to client's configured ID). */
 	marketplaceId?: string;
 	/**
-	 * Price the user found the product at (e.g. retail/source price the
-	 * frontend captured). Used downstream for profit-margin calculations.
-	 */
-	foundPrice?: Money;
-	/**
 	 * User-provided estimate of available units to source. Used downstream
 	 * for total-profit / inventory projections.
 	 */
@@ -196,8 +191,6 @@ export type SingleProductStatistics = {
 	image: string | null;
 	buyBoxPrice: Money | null;
 	lowestPrice: Money | null;
-	/** Frontend-provided price the user found the product at. */
-	foundPrice: Money | null;
 	/** Frontend-provided estimate of available units. */
 	estimatedQuantity: number | null;
 	bsr: BestSellerRank | null;
@@ -301,7 +294,6 @@ export async function getSingleProductStatistics(
 		image,
 		buyBoxPrice,
 		lowestPrice,
-		foundPrice: params.foundPrice ?? null,
 		estimatedQuantity:
 			typeof params.estimatedQuantity === 'number' && Number.isFinite(params.estimatedQuantity)
 				? params.estimatedQuantity

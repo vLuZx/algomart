@@ -110,7 +110,6 @@ export default function ProductDetailScreen() {
     fetchProductCalculation({
       barcode: product.barcode || undefined,
       asin: product.asin,
-      foundPrice: product.foundPrice,
       // foundPrice IS the per-unit COGS — the calculation API needs it
       // explicitly to populate the profit block (otherwise it returns
       // COGS_REQUIRED).
@@ -353,14 +352,6 @@ export default function ProductDetailScreen() {
               <View style={styles.metricTile}>
                 <Text style={styles.metricTileLabel}>Amazon Fees</Text>
                 <Text style={styles.metricTileValue}>${amazonFees.toFixed(2)}</Text>
-              </View>
-              <View style={styles.metricTile}>
-                <Text style={styles.metricTileLabel}>Inbound Fee</Text>
-                <Text style={styles.metricTileValue}>${computed.inboundFee.toFixed(2)}</Text>
-              </View>
-              <View style={styles.metricTile}>
-                <Text style={styles.metricTileLabel}>Monthly Storage</Text>
-                <Text style={styles.metricTileValue}>${computed.monthlyStorageFee.toFixed(2)}</Text>
               </View>
             </View>
 

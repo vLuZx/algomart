@@ -4,7 +4,7 @@ import {
     getSingleProductStatistics,
     type GetSingleProductStatisticsParams,
 } from '../services/statistics.service.js';
-import { parseFoundPrice, parseNumber, parseSingleValue } from '../utils/parser.utils.js';
+import { parseNumber, parseSingleValue } from '../utils/parser.utils.js';
 
 /**
  * GET /api/calculations/product
@@ -16,9 +16,6 @@ import { parseFoundPrice, parseNumber, parseSingleValue } from '../utils/parser.
  * Query params:
  *   - barcode? (string)            UPC/EAN. One of barcode|asin required.
  *   - asin? (string)               ASIN. One of barcode|asin required.
- *   - marketplaceId? (string)      Override the default marketplace.
- *   - foundPrice? (number)         Price the user found the product at.
- *   - foundPriceCurrency? (string) Currency for foundPrice (default USD).
  *   - estimatedQuantity? (number)  User-provided unit count estimate.
  *   - costOfGoods? (number)        Per-unit COGS. Required for profit math;
  *                                  if omitted, profit fields come back null
@@ -31,8 +28,6 @@ export async function getProductCalculationController(
     try {
         const barcode = parseSingleValue(req.query.barcode);
         const asin = parseSingleValue(req.query.asin);
-        const marketplaceId = parseSingleValue(req.query.marketplaceId);
-        const foundPrice = parseFoundPrice(req);
         const estimatedQuantity = parseNumber(req.query.estimatedQuantity);
         const costOfGoods = parseNumber(req.query.costOfGoods);
 
@@ -46,8 +41,6 @@ export async function getProductCalculationController(
         const params: GetSingleProductStatisticsParams = {};
         if (barcode) params.barcode = barcode;
         if (asin) params.asin = asin;
-        if (marketplaceId) params.marketplaceId = marketplaceId;
-        if (foundPrice) params.foundPrice = foundPrice;
         if (estimatedQuantity !== undefined) params.estimatedQuantity = estimatedQuantity;
 
         const stats = await getSingleProductStatistics(params);

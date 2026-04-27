@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   FlatList,
   Modal,
@@ -118,9 +118,13 @@ export default function SessionDetailScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ sessionId: string }>();
   const sessionId = getRouteParam(params.sessionId);
-  const { getSession, getProducts, renameSession, deleteProduct, updateFoundPrice } = useSessions();
+  const { getSession, getProducts, renameSession, deleteProduct, updateFoundPrice, loadSessionProducts } = useSessions();
   const session = sessionId ? getSession(sessionId) : undefined;
   const products = useMemo(() => (sessionId ? getProducts(sessionId) : []), [sessionId, getProducts]);
+
+  useEffect(() => {
+    if (sessionId) void loadSessionProducts(sessionId);
+  }, [sessionId, loadSessionProducts]);
 
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(session?.title ?? '');

@@ -17,17 +17,14 @@ import type { ProductCalculation } from '../types/api';
 export async function fetchProductCalculation(params: {
   barcode?: string;
   asin?: string;
-  foundPrice: number;
   estimatedQuantity?: number;
   costOfGoods?: number;
-  marketplaceId?: string;
 }): Promise<ProductCalculation> {
-  const query: Record<string, string | number> = { foundPrice: params.foundPrice };
+  const query: Record<string, string | number> = {};
   if (params.barcode) query.barcode = params.barcode;
   if (params.asin) query.asin = params.asin;
   if (typeof params.estimatedQuantity === 'number') query.estimatedQuantity = params.estimatedQuantity;
   if (typeof params.costOfGoods === 'number') query.costOfGoods = params.costOfGoods;
-  if (params.marketplaceId) query.marketplaceId = params.marketplaceId;
 
   const { data } = await api.get<ProductCalculation>('/api/calculations/product', {
     params: query,

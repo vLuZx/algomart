@@ -50,30 +50,6 @@ export type CalculationOptions = {
     costOfGoods?: number;
 };
 
-/**
- * Per-unit fee constants used for inbound + post-sale flows. These are NOT
- * available via SP-API, so we hardcode current US rate-card values and
- * surface the size-tier they apply to so the UI/audit trail is honest.
- *
- * Sources (US, 2024):
- *   - Inbound Placement Service Fee \u2014 minimums per Amazon's published table
- *   - Removal/disposal \u2014 FBA Fees rate card (per-unit, standard tier)
- */
-const INBOUND_PLACEMENT_FEE = {
-    standard: 0.27,
-    oversize: 1.58,
-} as const;
-
-const REMOVAL_FEE_PER_UNIT = {
-    standard: 2.27,
-    oversize: 4.40,
-} as const;
-
-const DISPOSAL_FEE_PER_UNIT = {
-    standard: 0.32,
-    oversize: 1.45,
-} as const;
-
 export function calculateProductStatistics(
     input: SingleProductStatistics,
     options: CalculationOptions = {}
@@ -104,12 +80,6 @@ export function calculateProductStatistics(
     const fulfillmentFee = input.fulfillmentFee.amount ?? 0; // 0 only if SP-API didn't return
     const storageFeeMonthly = input.storageFee.monthlyFee ?? 0;
 
-    const sizeTier: 'standard' | 'oversize' =
-        input.storageFee.sizeTier === 'oversize' ? 'oversize' : 'standard';
-    const inboundPlacementFeePerUnit = INBOUND_PLACEMENT_FEE[sizeTier];
-    const removalFeePerUnit = REMOVAL_FEE_PER_UNIT[sizeTier];
-    const disposalFeePerUnit = DISPOSAL_FEE_PER_UNIT[sizeTier];
-
     const amazonPrice = getAmazonPrice({
         buyBoxPrice: input.buyBoxPrice?.amount || 0,
         lowestPrice: input.lowestPrice?.amount || 0,
@@ -122,7 +92,6 @@ export function calculateProductStatistics(
         costOfGoods: options.costOfGoods,
         referralFee,
         fulfillmentFee,
-        inboundPlacementFeePerUnit,
         shippingToAmazonPerUnit,
         quantity,
     });
@@ -185,11 +154,8 @@ export function calculateProductStatistics(
                 typeof options.costOfGoods === 'number' ? options.costOfGoods : null,
             referralFee: round2(referralFee),
             fbaFee: round2(fulfillmentFee),
-            inboundFee: round2(inboundPlacementFeePerUnit),
             shippingFee: shippingToAmazonPerUnit,
             monthlyStorageFee: round2(storageFeeMonthly),
-            removalFeePerUnit,
-            disposalFeePerUnit,
             profit: {
                 netProfitPerUnit: profit.netProfitPerUnit,
                 netProfitTotal: profit.netProfitTotal,
@@ -247,7 +213,6 @@ function computeProfit(input: {
     costOfGoods: number | undefined;
     referralFee: number;
     fulfillmentFee: number;
-    inboundPlacementFeePerUnit: number;
     shippingToAmazonPerUnit: number;
     quantity: number;
 }): {
@@ -262,7 +227,6 @@ function computeProfit(input: {
     const totalFeesPerUnit = round2(
         input.referralFee +
             input.fulfillmentFee +
-            input.inboundPlacementFeePerUnit +
             input.shippingToAmazonPerUnit
     );
 
