@@ -23,7 +23,7 @@ import {
   type ScannedObject,
   type ScannedObjectType,
 } from 'react-native-vision-camera';
-import { ChevronLeft, DollarSign, Package, ScanLine, X } from 'lucide-react-native';
+import { ChevronLeft, DollarSign, Lock, Package, ScanLine, X } from 'lucide-react-native';
 import { GradientButton } from '../../../components/GradientButton';
 import { colors, font, radius, shadows } from '../../../constants/theme';
 import { fetchProductCalculation } from '../../../services/product.service';
@@ -137,6 +137,7 @@ export default function ScanScreen() {
   const [foundPriceText, setFoundPriceText] = useState('');
   const [estimatedQuantityText, setEstimatedQuantityText] = useState('1');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [approvalBlocked, setApprovalBlocked] = useState(false);
 
   const lastBarcodeRef = useRef<string | null>(null);
   /** Cooldown after surfacing the modal so the camera — which fires the
@@ -160,6 +161,7 @@ export default function ScanScreen() {
     setEstimatedQuantityText('1');
     setErrorMessage(null);
     setIsConfirming(false);
+    setApprovalBlocked(false);
   }, []);
 
   const handleBarcode = useCallback((raw: string, barcodeType: ScannedObjectType) => {
@@ -226,13 +228,11 @@ export default function ScanScreen() {
         estimatedQuantity: parsedEstimatedQuantity,
       });
       // Server short-circuits with `{ approvalRequired: true }` when the
-      // ASIN is gated for our seller account. Skip the product entirely.
+      // ASIN is gated for our seller account. Surface a styled in-sheet
+      // panel and DO NOT add the product to the session.
       if ('approvalRequired' in calc && calc.approvalRequired) {
-        Alert.alert(
-          'Approval required',
-          'Amazon requires approval to list this product on your seller account. Skipping.',
-        );
-        resetScan();
+        setApprovalBlocked(true);
+        setIsConfirming(false);
         return;
       }
       const input = buildScannedInput(calc as ProductCalculationFull, parsedFoundPrice, parsedEstimatedQuantity, scannedCode);
@@ -377,47 +377,67 @@ export default function ScanScreen() {
                 ) : null}
               </View>
 
-              <Text style={styles.inputLabel}>Found Price</Text>
-              <View style={styles.inputWrap}>
-                <DollarSign size={18} color={colors.textSubtle} strokeWidth={2.2} />
-                <TextInput
-                  value={foundPriceText}
-                  onChangeText={setFoundPriceText}
-                  placeholder="0.00"
-                  placeholderTextColor={colors.textSubtle}
-                  keyboardType="decimal-pad"
-                  style={styles.input}
-                  autoFocus
-                  returnKeyType="next"
-                />
-              </View>
+              {approvalBlocked ? (
+                <View style={styles.approvalPanel}>
+                  <View style={styles.approvalIconWrap}>
+                    <Lock size={22} color="#facc15" strokeWidth={2.2} />
+                  </View>
+                  <Text style={styles.approvalTitle}>Approval Required</Text>
+                  <Text style={styles.approvalBody}>
+                    Amazon requires approval to list this product on your seller
+                    account. This product will not be added to your session.
+                  </Text>
+                  <GradientButton
+                    label="Skip & Continue Scanning"
+                    onPress={resetScan}
+                    style={styles.confirmButton}
+                  />
+                </View>
+              ) : (
+                <>
+                  <Text style={styles.inputLabel}>Found Price</Text>
+                  <View style={styles.inputWrap}>
+                    <DollarSign size={18} color={colors.textSubtle} strokeWidth={2.2} />
+                    <TextInput
+                      value={foundPriceText}
+                      onChangeText={setFoundPriceText}
+                      placeholder="0.00"
+                      placeholderTextColor={colors.textSubtle}
+                      keyboardType="decimal-pad"
+                      style={styles.input}
+                      autoFocus
+                      returnKeyType="next"
+                    />
+                  </View>
 
-              <Text style={styles.inputLabel}>Estimated Quantity</Text>
-              <View style={styles.inputWrap}>
-                <Package size={18} color={colors.textSubtle} strokeWidth={2.2} />
-                <TextInput
-                  value={estimatedQuantityText}
-                  onChangeText={setEstimatedQuantityText}
-                  placeholder="1"
-                  placeholderTextColor={colors.textSubtle}
-                  keyboardType="number-pad"
-                  style={styles.input}
-                  returnKeyType="done"
-                  onSubmitEditing={handleConfirm}
-                />
-              </View>
+                  <Text style={styles.inputLabel}>Estimated Quantity</Text>
+                  <View style={styles.inputWrap}>
+                    <Package size={18} color={colors.textSubtle} strokeWidth={2.2} />
+                    <TextInput
+                      value={estimatedQuantityText}
+                      onChangeText={setEstimatedQuantityText}
+                      placeholder="1"
+                      placeholderTextColor={colors.textSubtle}
+                      keyboardType="number-pad"
+                      style={styles.input}
+                      returnKeyType="done"
+                      onSubmitEditing={handleConfirm}
+                    />
+                  </View>
 
-              <GradientButton
-                label={isConfirming ? 'Calculating…' : 'Confirm'}
-                onPress={handleConfirm}
-                disabled={parsedFoundPrice === null || parsedEstimatedQuantity === null || isConfirming}
-                style={styles.confirmButton}
-              />
-              {errorMessage ? (
-                <Text style={[styles.statusText, styles.statusError, { marginTop: 8, textAlign: 'center' }]}>
-                  {errorMessage}
-                </Text>
-              ) : null}
+                  <GradientButton
+                    label={isConfirming ? 'Calculating…' : 'Confirm'}
+                    onPress={handleConfirm}
+                    disabled={parsedFoundPrice === null || parsedEstimatedQuantity === null || isConfirming}
+                    style={styles.confirmButton}
+                  />
+                  {errorMessage ? (
+                    <Text style={[styles.statusText, styles.statusError, { marginTop: 8, textAlign: 'center' }]}>
+                      {errorMessage}
+                    </Text>
+                  ) : null}
+                </>
+              )}
             </SafeAreaView>
           </KeyboardAvoidingView>
         </View>
@@ -625,6 +645,39 @@ const styles = StyleSheet.create({
   },
   confirmButton: {
     marginTop: 4,
+  },
+  approvalPanel: {
+    marginTop: 8,
+    padding: 18,
+    borderRadius: radius.lg,
+    backgroundColor: 'rgba(250, 204, 21, 0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(250, 204, 21, 0.30)',
+    alignItems: 'center',
+    gap: 10,
+  },
+  approvalIconWrap: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(250, 204, 21, 0.14)',
+    borderWidth: 1,
+    borderColor: 'rgba(250, 204, 21, 0.30)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+  approvalTitle: {
+    color: '#facc15',
+    fontSize: font.sizeMd,
+    fontWeight: font.weightSemibold,
+  },
+  approvalBody: {
+    color: colors.textMuted,
+    fontSize: font.sizeXs,
+    lineHeight: 18,
+    textAlign: 'center',
+    marginBottom: 8,
   },
   fallback: {
     flex: 1,

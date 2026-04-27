@@ -24,7 +24,6 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { colors, font, gradients, radius, shadows } from '../constants/theme';
 import type { SellerPopularity, SessionProduct } from '../types/product';
-import { RatingStars } from './RatingStars';
 
 interface ProductCardProps {
   readonly sessionId: string;
@@ -166,11 +165,6 @@ export function ProductCard({
             <Text style={styles.title} numberOfLines={2}>
               {product.title}
             </Text>
-
-            <View style={styles.ratingRow}>
-              <RatingStars rating={product.rating} size={13} />
-              <Text style={styles.ratingText}>{product.rating.toFixed(1)}</Text>
-            </View>
 
             <View style={styles.badgeRow}>
               <View style={styles.categoryBadge}>

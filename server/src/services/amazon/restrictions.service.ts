@@ -154,7 +154,14 @@ class AmazonRestrictionsService {
 			const reasonCodes = restrictions.flatMap((r) =>
 				r.reasons.map((reason) => reason.reasonCode),
 			);
-			const requiresApproval = reasonCodes.includes('APPROVAL_REQUIRED');
+			// Treat both APPROVAL_REQUIRED and NOT_ELIGIBLE as "approval
+			// required" — NOT_ELIGIBLE means the seller is currently blocked
+			// from listing this brand/ASIN at all (e.g. "You are not approved
+			// to list this brand and we are currently not accepting
+			// applications."), which the frontend should handle the same way.
+			const requiresApproval =
+				reasonCodes.includes('APPROVAL_REQUIRED') ||
+				reasonCodes.includes('NOT_ELIGIBLE');
 			const canList = restrictions.length === 0;
 
 			return {

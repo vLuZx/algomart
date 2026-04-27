@@ -195,6 +195,9 @@ export default function ProductDetailScreen() {
 
   const inboundOk = fetched.inboundEligibility.isEligible;
   const restrictions = fetched.inboundEligibility.reasons;
+  const listingRestrictionMessages: string[] = (fetched.listingRestrictions?.restrictions ?? [])
+    .flatMap((r) => r.reasons.map((reason) => reason.message))
+    .filter((msg): msg is string => Boolean(msg));
 
   // Estimated stock metrics
   const totalProfit =
@@ -274,7 +277,39 @@ export default function ProductDetailScreen() {
           </View>
         </View>
 
-        {/* 2. Buy Signal */}
+        {/* 2. Listing Restrictions (SP-API) — surfaced right after the
+            product header so the user sees gating info before any of the
+            profit/market data. */}
+        {listingRestrictionMessages.length > 0 && (
+          <View style={styles.accentCard}>
+            <View style={styles.accentLine} />
+            <View style={styles.accentCardBody}>
+              <View style={styles.sectionTitleRow}>
+                <View style={styles.sectionIconWrap}>
+                  <AlertCircle size={14} color={colors.accent} strokeWidth={2} />
+                </View>
+                <Text style={styles.sectionTitle}>Listing Restrictions</Text>
+              </View>
+
+              <View style={styles.specTable}>
+                {listingRestrictionMessages.map((message, i) => (
+                  <View
+                    key={`${message}-${i}`}
+                    style={[
+                      styles.restrictionRow,
+                      i < listingRestrictionMessages.length - 1 && styles.specRowBorder,
+                    ]}
+                  >
+                    <View style={[styles.restrictionDot, { backgroundColor: colors.accent }]} />
+                    <Text style={styles.restrictionText}>{message}</Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+          </View>
+        )}
+
+        {/* 3. Buy Signal */}
         <BuySignalCard
           scoreOverride={buySignal.score}
           product={{
@@ -512,6 +547,9 @@ export default function ProductDetailScreen() {
             </View>
           </View>
         )}
+
+        {/* 8. Listing Restrictions (SP-API) — moved to the top of the page,
+            directly under the product header. */}
       </ScrollView>
     </SafeAreaView>
   );

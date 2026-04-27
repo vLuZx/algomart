@@ -50,6 +50,25 @@ export interface ProductBuySignal {
   };
 }
 
+export interface ProductListingRestrictionReason {
+  message: string;
+  reasonCode: string;
+}
+
+export interface ProductListingRestriction {
+  marketplaceId: string;
+  conditionType?: string;
+  reasons: ProductListingRestrictionReason[];
+}
+
+export interface ProductListingRestrictions {
+  canList: boolean;
+  requiresApproval: boolean;
+  conditionType: string;
+  restrictions: ProductListingRestriction[];
+  error?: string;
+}
+
 export interface ProductCalculationFetched {
   sellerPopularity: number;
   bsr: number;
@@ -63,6 +82,7 @@ export interface ProductCalculationFetched {
     isEligible: boolean;
     reasons: string[];
   };
+  listingRestrictions: ProductListingRestrictions;
   competition: {
     totalSellerCount: number;
     fbaSellerCount: number;
