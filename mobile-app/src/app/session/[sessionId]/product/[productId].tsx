@@ -110,9 +110,6 @@ export default function ProductDetailScreen() {
     fetchProductCalculation({
       barcode: product.barcode || undefined,
       asin: product.asin,
-      // foundPrice IS the per-unit COGS — the calculation API needs it
-      // explicitly to populate the profit block (otherwise it returns
-      // COGS_REQUIRED).
       costOfGoods: product.foundPrice,
       estimatedQuantity: product.estimatedQuantity,
     })
